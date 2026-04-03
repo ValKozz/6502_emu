@@ -3,12 +3,12 @@
 #include <iostream>
 #include <unistd.h>
 
-CPU::CPU(uint8_t freq = 1) { 
+CPU::CPU(uint8_t freq) { 
 	if (freq > 3) freq = 3;
 	 // 1 MHz = 1 000 000 Hz 
-	cycle_lenght = 1 / (1000000 * freq)
+	cycle_lenght = 1 / (1000000 * freq);
 	
-	sp =  = 0x01FF;
+	sp = 0x00FF;
 	sta = 0;
 	x = 0;
 	y = 0;
@@ -28,7 +28,7 @@ void CPU::push_stack(u16 value) {
 	memory[sp--] = value;
 	if (sp < 0x0100) {
 		sp = 0x01FF;
-		fprintf(stderr, "OVERFLOW DETECTED STACK POINTER: %4X\n", st);
+		fprintf(stderr, "OVERFLOW DETECTED STACK POINTER: %4X\n", sp);
 	}
 }
 
@@ -36,7 +36,7 @@ u16 CPU::pop_stack() {
 	u16 popped = memory[sp++];
  	if (sp > 0x01FF) {
  		sp = 0x0100;
-		fprintf(stderr, "UNDERFLOW DETECTED STACK POINTER: %4X\n", st);
+		fprintf(stderr, "UNDERFLOW DETECTED STACK POINTER: %4X\n", sp);
  	}
  	return popped;
 }
