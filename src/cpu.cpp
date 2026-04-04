@@ -86,10 +86,10 @@ void CPU::reset() {
 
 	u8 lo = read_byte(0xFFFC);
 	u8 hi = read_byte(0xFFFD);
-	pc = hi << 8 | lo;
+	pc = (hi << 8 | lo) - 1;
 	
 	DEBMSG("Set PC to", pc);
-	run_cycles(2);
+	run_cycles(3); // +1 for fetch
 	fetch();
 }
 
@@ -116,20 +116,11 @@ u16 CPU::pop_stack() {
  	}
  	return popped;
 }
-	// helpers to set status register, either 0 or 1
+
+// helpers to set status register, either 0 or 1
 void CPU::set_status(u8 bit) {
 		sta |= bit;
 	}
-
-// TODO 
-void CPU::fetch() {
-	// temp for testing
-	DEBMSG("Fetched", memory[pc] << 8 | memory[++pc]);
-	run_cycles(1);
-}
-
-// TODO
-void CPU::execute(){}
 
 // helpers to access memeory
 void CPU::write_byte(u16 addr, u8 data) {
@@ -151,18 +142,6 @@ u8 CPU::read_byte(u16 addr) {
 	}
 }
 
-u8 CPU::get_indirect(u16 addr) {
-	if (addr < MEMSIZE+1) {
-		u16 data_addr = memory[addr];
-	 	if (data_addr < MEMSIZE+1) return memory[data_addr];
-	 	else fprintf(stderr, "Attempted to read out of memory bounds after INDIRECT @%04X = %04X\n", addr, data_addr);
-		return 0;
-	}
-	else {
-		fprintf(stderr, "Attempted to read out of memory bounds before INDIRECT @%04X\n", addr);
-		return 0;
-	}
-}
 
 // public run TODO
 void CPU::run() {
@@ -173,50 +152,87 @@ void CPU::run() {
 	dump_mem();
 }
 
+// TODO 
+void CPU::fetch() {
+	pc+=1;
+	// temp for testing
+	DEBMSG("Fetched", memory[pc] << 8 | memory[pc]);
+}
+
+// TODO
+void CPU::execute(){}
 
 // TODO
 // Load/Store operations
-// void CPU::LDA_IMM() {
-// 	run_cycles(2);
-// }
+void CPU::LDA_IMM() {
+	ac = read_byte(++pc);
+	run_cycles(2);
+}
 
-// void CPU::LDA_ZPG() {
-// 	run_cycles(3);
-// }
+void CPU::LDA_ZPG() {
+	u8 addr = read_byte(++pc);
+	ac = read_byte(addr);
+	run_cycles(3);
+}
 
-// void CPU::LDA_ZPX() {
-// 	run_cycles(4);
-// }
+void CPU::LDA_ZPX() {
+	u8 addr = read_byte(++pc);
+	ac = read_byte(addr + x);
+	run_cycles(4);
+}
 
-// void CPU::LDA_ABS() {
-// 	run_cycles(4);
-// }
+void CPU::LDA_ABS() {
+	u16 addr = ++pc << 8 | ++pc;
+	ac = read_byte(addr);
+	run_cycles(4);
+}
 
-// void CPU::LDA_ABX() {
-// 	// TODO check if page crossed and add an extra cycle
-// 	u8 cycles = 4;
+void CPU::LDA_ABX() {
+	u8 cycles = 4;
+	u16 addr = ++pc << 8 | ++pc;
+	// check mod of address, if product is lower after adding x, add cycle
+ 	// TODO, there has to be a better way 
+	if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+
+	ac = read_byte(addr + x);
+
+	run_cycles(cycles);
+}
+
+void CPU::LDA_ABY() {
+	u8 cycles = 4;
+	u16 addr = ++pc << 8 | ++pc;
+	if ((addr % 256) > ((addr+y) % 256)) cycles++;	
+	ac = read_byte(addr + y);
+
+	run_cycles(cycles);
+
+}
+
+void CPU::LDA_XIN() { // indexed indirect, add x to addr
+	u8 pt = read_byte(++pc);
+	u8 pt_lo_addr = (pt + x) & 0xFF; // wrap around	
+	u8 pt_hi_addr = (pt_lo_addr + 1) & 0xFF;
+	u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+
+	ac = read_byte(addr);
 	
-// 	run_cycles(cycles);
-// }
+	run_cycles(6);
+} 
 
-// void CPU::LDA_ABY() {
-// 	// TODO check if page crossed and add an extra cycle
-// 	u8 cycles = 4;
-	
-// 	run_cycles(cycles);
+void CPU::LDA_INY() { // indirect indexed
+	u8 cycles = 5;
 
-// }
+	u8 pt = read_byte(++pc);
+	// eww, fix
+	u16 base_addr =  ((u16)(read_byte(pt + 1) & 0xFF) << 8) | read_byte(pt);
+	u16 addr = read_byte(base_addr + y);
+	// check if we changed pages
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
 
-// void CPU::LDA_XIN() { // indexed indirect, add x to addr
-// 	run_cycles(6);
-// } 
-
-// void CPU::LDA_INY() { // indirect indexed
-// 	// TODO check if page crossed and add an extra cycle
-// 	u8 cycles = 5;
-
-// 	run_cycles(cycles);
-// } 
+	ac = read_byte(addr);
+	run_cycles(cycles);
+} 
 
 // void CPU::LDX_IMM();
 // void CPU::LDX_ZPG();

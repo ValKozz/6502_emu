@@ -66,8 +66,7 @@ class CPU
 	// helpers to access memeory
 	u8 read_byte(u16 addr);
 	void write_byte(u16 addr, u8 data);
-	u8 get_indirect(u16 addr);
-	
+		
 	// memory dump TODO
 	void dump_mem();
 
