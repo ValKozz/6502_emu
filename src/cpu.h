@@ -3,8 +3,8 @@
 
 #include <array>
 #include <cinttypes>
-#include <vector>
 #include <stdbool.h>
+#include <vector>
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -68,11 +68,13 @@ class CPU
 	void write_byte(u16 addr, u8 data);
 	u8 get_indirect(u16 addr);
 	
+	// memory dump TODO
+	void dump_mem();
+
 	// Load/Store operations
 	void LDA_IMM(); 
 	void LDA_ZPG();
 	void LDA_ZPX();
-	void LDA_ZPY();
 	void LDA_ABS();
 	void LDA_ABX();
 	void LDA_ABY();
@@ -289,7 +291,7 @@ class CPU
 	};
 public:	
 	CPU(uint8_t freq = 1); // used to reserve memory and set frequency in MHz
-	bool load_prog();	
+	bool load_prog(std::vector<u8> prog, int vec_size);
 	void run();
 };
 

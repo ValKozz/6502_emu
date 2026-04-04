@@ -3,6 +3,8 @@
 #include <iostream>
 #include <unistd.h>
 
+#define MAX_PROG_SIZE 0xFFFF - 0xC000
+
 #ifndef DEBUG
 #define DEBUG 0
 #else 
@@ -10,11 +12,15 @@
 #endif
 
 #define DEBMSG(mess, opcode) do {							\
-		if (DEBUG) printf("%s : %4X\n", (mess), (opcode)); 	\
+		if (DEBUG) printf("%s : %04X\n", (mess), (opcode)); \
 	} while (0)
 
-#define WARN(mess, opcode) do {							\
-		if (DEBUG) fprintf(stderr, "WARN: %s : %4X\n", (mess), (opcode)); 	\
+#define DEBRD(mess, data, opcode) do {						\
+	if (DEBUG) printf("%s : %4X @ %04X\n")					\
+} while (0)
+
+#define WARN(mess, opcode) do {												\
+		if (DEBUG) fprintf(stderr, "WARN: %s : %04X\n", (mess), (opcode)); 	\
 	} while (0)
 
 CPU::CPU(uint8_t freq) { 
@@ -30,6 +36,36 @@ CPU::CPU(uint8_t freq) {
 	running = true;
 }
 
+bool CPU::load_prog(std::vector<u8> prog, int vec_size) {
+	if (vec_size >= MAX_PROG_SIZE) {
+		fprintf(stderr, "Program too large to fit into memory!\n");
+		return false;
+	}
+	int prog_start = (MEMSIZE+1) - vec_size;
+	for (int i = 0; i < vec_size; i++) memory[i + prog_start] = prog[i];
+
+	return true;
+}
+
+void CPU::dump_mem() {
+	#if DEBUG
+	printf("REGS:\nPC: @%04X (%04X) SP: %04X\nX: %04X Y: %04X AC: %04X\nSTATUS: %04X\n\n",pc, memory[pc], sp, x, y, ac, sta);
+
+	std::ofstream outfile("mem_dmp.bin", std::ios::binary);
+	if (!outfile.is_open()) {
+		fprintf(stderr, "Error writing mem dump to file!\n");
+		return;
+	}
+
+	for (int i = 0; i < 0x10000; i++) {
+		outfile.write((char*)&(memory[i]), sizeof(u8));
+	}
+	outfile.close();
+	#else
+	return
+	#endif
+}
+
 /*
 CPU intitializes in 7 cycles
 	Cycle 0: 	SP is set to $00 and PC is set to FFFC, Interupt flag is set to 1 (disabled)
@@ -42,15 +78,16 @@ void CPU::reset() {
 	DEBMSG("Running Initialization routine PC set to", 0xFFFC);
 	// Cycle 0
 	sp = 0x0100;	// sp is 16 bit to make addressing easier witm memory[sp], checks for overflow are done on push/pop
-	pc = 0xFFFC;
-	set_status(INTDIS);
+	set_status(INTDIS); // set interupt disable bit in status register
 	run_cycles(1);
 	// Cycle 1-3
 	// Do nothing?
 	run_cycles(3);
+
 	u8 lo = read_byte(0xFFFC);
 	u8 hi = read_byte(0xFFFD);
 	pc = hi << 8 | lo;
+	
 	DEBMSG("Set PC to", pc);
 	run_cycles(2);
 	fetch();
@@ -84,8 +121,10 @@ void CPU::set_status(u8 bit) {
 		sta |= bit;
 	}
 
+// TODO 
 void CPU::fetch() {
-	DEBMSG("Fetched", memory[pc]);
+	// temp for testing
+	DEBMSG("Fetched", memory[pc] << 8 | memory[++pc]);
 	run_cycles(1);
 }
 
@@ -98,7 +137,7 @@ void CPU::write_byte(u16 addr, u8 data) {
 		memory[addr] = data;
 	}
 	else {
-		fprintf(stderr, "Attempted to write out of memory bounds @%4X\n", addr);
+		fprintf(stderr, "Attempted to write out of memory bounds @%04X\n", addr);
 	}
 }
 
@@ -107,7 +146,7 @@ u8 CPU::read_byte(u16 addr) {
 		return memory[addr];
 	}
 	else {
-		fprintf(stderr, "Attempted to read out of memory bounds @%4X\n", addr);
+		fprintf(stderr, "Attempted to read out of memory bounds @%04X\n", addr);
 		return 0;
 	}
 }
@@ -116,11 +155,11 @@ u8 CPU::get_indirect(u16 addr) {
 	if (addr < MEMSIZE+1) {
 		u16 data_addr = memory[addr];
 	 	if (data_addr < MEMSIZE+1) return memory[data_addr];
-	 	else fprintf(stderr, "Attempted to read out of memory bounds after INDIRECT @%4X = %4X\n", addr, data_addr);
+	 	else fprintf(stderr, "Attempted to read out of memory bounds after INDIRECT @%04X = %04X\n", addr, data_addr);
 		return 0;
 	}
 	else {
-		fprintf(stderr, "Attempted to read out of memory bounds before INDIRECT @%4X\n", addr);
+		fprintf(stderr, "Attempted to read out of memory bounds before INDIRECT @%04X\n", addr);
 		return 0;
 	}
 }
@@ -128,22 +167,56 @@ u8 CPU::get_indirect(u16 addr) {
 // public run TODO
 void CPU::run() {
 	reset();
-
+	// testing
+	for (int i = 0; i < 5; i++) fetch();
+	
+	dump_mem();
 }
-
 
 
 // TODO
 // Load/Store operations
-// void CPU::LDA_IMM(); 
-// void CPU::LDA_ZPG();
-// void CPU::LDA_ZPX();
-// void CPU::LDA_ZPY();
-// void CPU::LDA_ABS();
-// void CPU::LDA_ABX();
-// void CPU::LDA_ABY();
-// void CPU::LDA_XIN(); // indexed indirect, add x to addr
-// void CPU::LDA_INY(); // indirect indexed
+// void CPU::LDA_IMM() {
+// 	run_cycles(2);
+// }
+
+// void CPU::LDA_ZPG() {
+// 	run_cycles(3);
+// }
+
+// void CPU::LDA_ZPX() {
+// 	run_cycles(4);
+// }
+
+// void CPU::LDA_ABS() {
+// 	run_cycles(4);
+// }
+
+// void CPU::LDA_ABX() {
+// 	// TODO check if page crossed and add an extra cycle
+// 	u8 cycles = 4;
+	
+// 	run_cycles(cycles);
+// }
+
+// void CPU::LDA_ABY() {
+// 	// TODO check if page crossed and add an extra cycle
+// 	u8 cycles = 4;
+	
+// 	run_cycles(cycles);
+
+// }
+
+// void CPU::LDA_XIN() { // indexed indirect, add x to addr
+// 	run_cycles(6);
+// } 
+
+// void CPU::LDA_INY() { // indirect indexed
+// 	// TODO check if page crossed and add an extra cycle
+// 	u8 cycles = 5;
+
+// 	run_cycles(cycles);
+// } 
 
 // void CPU::LDX_IMM();
 // void CPU::LDX_ZPG();
