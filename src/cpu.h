@@ -41,6 +41,7 @@ Last 6 bytes are reserved, 0xFFFA to 0xFFFF
 #define OVRFL	0x40
 #define NEG		0x80
 
+#define MEMSIZE 0xFFFF
 
 class CPU
 {
@@ -54,7 +55,7 @@ class CPU
 	std::vector<u8> memory;
 	float cycle_lenght;
 
-	void run_cycle(int cycles);
+	void run_cycles(int cycles);
 
 	// helpers to set status register, either 0 or 1
 	void set_status(u8 bit);
@@ -65,12 +66,8 @@ class CPU
 	// helpers to access memeory
 	u8 read_byte(u16 addr);
 	void write_byte(u16 addr, u8 data);
-	u8 get_zero_page(u8 addr);
-	u8 get_absolute(u16 addr);
 	u8 get_indirect(u16 addr);
-	u8 get_indirect_zero(u8 addr);
 	
-	// Instruction Set TODO MUST ADD ALL MODES
 	// Load/Store operations
 	void LDA_IMM(); 
 	void LDA_ZPG();
@@ -264,14 +261,15 @@ class CPU
 	void NOP();
 	void RTI();
 
+	void reset(); // initialize the CPU
 	void fetch();
 	void execute();
-		// related to Addressing modes 
+
 	using op_func = void (CPU::*)();
 	static constexpr op_func ILL = &CPU::NOP;
 
 	static constexpr std::array<op_func, 256> opcode_table = {
-/*  0x0 			0x1 			 0x2    	   0x3    0x4 				0x5  		0x6			  0x7  0x8		  0x9			 0xA 		  0xB  0xC				0xD 		   0xE			  0XF*/
+/*  	0x0 			0x1 		 0x2    	   0x3  0x4 			0x5  		   0x6			  0x7  0x8		  0x9			 0xA 		  0xB  0xC				0xD 		   0xE			  0XF*/
 /*0x0*/ &CPU::BRK,    &CPU::ORA_XIN, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPG, &CPU::ASL_ZPG, ILL, &CPU::PHP, &CPU::ORA_IMM, &CPU::ASL_A, ILL, ILL,		 		&CPU::ORA_ABS, &CPU::ASL_ABS, ILL,
 /*0x1*/ &CPU::BPL,    &CPU::ORA_INY, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPX, &CPU::ASL_ZPX, ILL, &CPU::CLC, &CPU::ORA_ABY, ILL,		  ILL, ILL, 			&CPU::ORA_ABX, &CPU::ASL_ABX, ILL,
 /*0x2*/ &CPU::JSR,    &CPU::AND_XIN, ILL, 		   ILL, &CPU::BIT_ZPG, 	&CPU::AND_ZPG, &CPU::ROL_ZPG, ILL, &CPU::PLP, &CPU::AND_IMM, &CPU::ROL_A, ILL, &CPU::BIT_ABS, 	&CPU::AND_ABS, &CPU::ROL_ABS, ILL,
