@@ -48,7 +48,7 @@ class CPU
 	bool running = false;
 	u16 pc;
 	// stack pointer $0100 to $01FF, points to the next free address; decrement on push
-	u16 sp;
+	u8 sp;
 	u8 ac; 		// accumulator
 	u8 x, y;
 	u8 sta; 	// CPU status register
@@ -59,14 +59,17 @@ class CPU
 
 	// helpers to set status register, either 0 or 1
 	void set_status(u8 bit);
+	void unset_status(u8 bit);
+	void status_on_transfer(u16 reg);
 
-	void push_stack(u16 value);
-	u16 pop_stack();
+	void push_stack(u8 value);
+	u8 pop_stack();
+	u8 peek_stack();
 
 	// helpers to access memeory
 	u8 read_byte(u16 addr);
 	void write_byte(u16 addr, u8 data);
-		
+
 	// memory dump TODO
 	void dump_mem();
 
