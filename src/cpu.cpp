@@ -441,18 +441,73 @@ void CPU::ORA_ABY() {ABA_OP(ac, |=, y);}
 void CPU::ORA_XIN() {XIN_OP(ac, |=);}
 void CPU::ORA_INY() {INY_OP(ac, |=);}
 
-// void CPU::BIT_ABS(); // Bit test
-// void CPU::BIT_ZPG(); 
 
-// // Arithmetic
-// void CPU::ADC_IMM(); // Add w/ carry
-// void CPU::ADC_ZPG();
-// void CPU::ADC_ZPX();
-// void CPU::ADC_ABS();
-// void CPU::ADC_ABX();
-// void CPU::ADC_ABY();
-// void CPU::ADC_XIN();
-// void CPU::ADC_INY();
+/*
+bits 7 and 6 of operand are transfered to N and V
+Z is set by result of A AND operand
+*/
+void CPU::BIT_ZPG() {
+	u8 addr = read_byte(++pc);
+	u8 oper = read_byte(addr);
+
+	u8 b7 = oper >> 7;
+	u8 b6 = (oper >> 6) & 0x01;
+	b7 ? set_status(NEG) : unset_status(NEG);
+	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+
+	u8 res = ac & oper;
+	res ? set_status(ZERO) : unset_status(ZERO);
+	run_cycles(3);
+}
+
+void CPU::BIT_ABS() {
+	u16 addr = read_byte(++pc) << 8 | read_byte(pc);
+	u8 oper = read_byte(addr);
+
+	u8 b7 = oper >> 7;
+	u8 b6 = (oper >> 6) & 0x1;
+	b7 ? set_status(NEG) : unset_status(NEG);
+	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+
+	u8 res = ac & oper;
+	res ? set_status(ZERO) : unset_status(ZERO);
+	run_cycles(3);
+	run_cycles(4);
+}
+
+// Arithmetic
+void CPU::ADC_IMM() {
+	IMM_OP();
+}
+
+void CPU::ADC_ZPG() {
+
+}
+
+void CPU::ADC_ZPX() {
+
+}
+
+void CPU::ADC_ABS() {
+
+}
+
+void CPU::ADC_ABX() {
+
+}
+
+void CPU::ADC_ABY() {
+
+}
+
+void CPU::ADC_XIN() {
+
+}
+
+void CPU::ADC_INY() {
+
+}
+
 
 // void CPU::SBC_IMM();	// Substr w/ carry
 // void CPU::SBC_ZPG();
