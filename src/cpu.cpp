@@ -59,7 +59,6 @@
 	run_cycles(cycles);									\
 } while (0)
 
-
 #define XIN_OP(reg, op) do {							\
 	u8 pt = read_byte(++pc);							\
 	u8 pt_lo_addr = pt + x;								\
@@ -137,7 +136,7 @@ void CPU::reset() {
 	DEBMSG("Running Initialization routine PC set to", 0xFFFC);
 	// Cycle 0
 	sp = 0x00;
-	set_status(INTDIS); // set interupt disable bit in status register
+	set_status(INTDIS_POS, 1); // set interupt disable bit in status register
 	run_cycles(1);
 	// Cycle 1-3
 	// Do nothing?
@@ -180,22 +179,17 @@ u8 CPU::peek_stack() {
 }
 
 // helpers to set status register, either 0 or 1
-void CPU::set_status(u8 bit) {
-	sta |= bit;
+void CPU::set_status(u8 bit_pos, u8 value) {
+	sta |= (bit_pos << value);
 }
 
-void CPU::unset_status(u8 bit) {
-	sta ^= bit;
+void CPU::status_on_transfer(u8 reg) {
+	if (reg & (0x1 << 7)) set_status(NEG_POS, 1);
+	else set_status(NEG_POS, 0);
+
+	if (reg == 0) set_status(ZERO_POS, 1);
+	else set_status(ZERO_POS, 0);
 }
-
-void CPU::status_on_transfer(u16 reg) {
-	if (reg & (1 << 7)) set_status(NEG);
-	else unset_status(NEG);
-
-	if (reg == 0) set_status(ZERO);
-	else unset_status(ZERO);
-}
-
 
 // helpers to access memeory
 void CPU::write_byte(u16 addr, u8 data) {
@@ -452,11 +446,11 @@ void CPU::BIT_ZPG() {
 
 	u8 b7 = oper >> 7;
 	u8 b6 = (oper >> 6) & 0x01;
-	b7 ? set_status(NEG) : unset_status(NEG);
-	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+	b7 ? set_status(NEG_POS, 1) : set_status(NEG_POS, 0);
+	b6 ? set_status(OVRFL_POS, 1) : set_status(OVRFL_POS, 0);
 
 	u8 res = ac & oper;
-	res ? set_status(ZERO) : unset_status(ZERO);
+	res ? set_status(ZERO_POS, 1) : set_status(ZERO_POS, 0);
 	run_cycles(3);
 }
 
@@ -466,47 +460,47 @@ void CPU::BIT_ABS() {
 
 	u8 b7 = oper >> 7;
 	u8 b6 = (oper >> 6) & 0x1;
-	b7 ? set_status(NEG) : unset_status(NEG);
-	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+	b7 ? set_status(NEG_POS, 1) : set_status(NEG_POS, 0);
+	b6 ? set_status(OVRFL_POS, 1) : set_status(OVRFL_POS, 0);
 
 	u8 res = ac & oper;
-	res ? set_status(ZERO) : unset_status(ZERO);
+	res ? set_status(ZERO_POS, 1) : set_status(ZERO_POS, 0);
 	run_cycles(3);
 	run_cycles(4);
 }
 
 // Arithmetic
 void CPU::ADC_IMM() {
-	IMM_OP();
+	// TODO
 }
 
-void CPU::ADC_ZPG() {
+// void CPU::ADC_ZPG() {
 
-}
+// }
 
-void CPU::ADC_ZPX() {
+// void CPU::ADC_ZPX() {
 
-}
+// }
 
-void CPU::ADC_ABS() {
+// void CPU::ADC_ABS() {
 
-}
+// }
 
-void CPU::ADC_ABX() {
+// void CPU::ADC_ABX() {
 
-}
+// }
 
-void CPU::ADC_ABY() {
+// void CPU::ADC_ABY() {
 
-}
+// }
 
-void CPU::ADC_XIN() {
+// void CPU::ADC_XIN() {
 
-}
+// }
 
-void CPU::ADC_INY() {
+// void CPU::ADC_INY() {
 
-}
+// }
 
 
 // void CPU::SBC_IMM();	// Substr w/ carry

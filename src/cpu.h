@@ -41,6 +41,15 @@ Last 6 bytes are reserved, 0xFFFA to 0xFFFF
 #define OVRFL	0x40
 #define NEG		0x80
 
+#define CARRY_POS 	0
+#define ZERO_POS  	1
+#define INTDIS_POS	2
+#define DECB_POS	3
+#define BRKB_POS	4
+#define UNDF_POS	5
+#define OVRFL_POS	6
+#define NEG_POS		7
+
 #define MEMSIZE 0xFFFF
 
 class CPU
@@ -58,9 +67,8 @@ class CPU
 	void run_cycles(int cycles);
 
 	// helpers to set status register, either 0 or 1
-	void set_status(u8 bit);
-	void unset_status(u8 bit);
-	void status_on_transfer(u16 reg);
+	void set_status(u8 bit_pos, u8 value);
+	void status_on_transfer(u8 reg);
 
 	void push_stack(u8 value);
 	u8 pop_stack();
