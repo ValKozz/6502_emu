@@ -68,6 +68,7 @@ class CPU
 
 	// helpers to set status register, either 0 or 1
 	void set_status(u8 bit_pos, u8 value);
+	u8 get_status(u8 bit_pos);
 	void status_on_transfer(u8 reg);
 
 	void push_stack(u8 value);
@@ -82,7 +83,7 @@ class CPU
 	void dump_mem();
 
 	// Load/Store operations
-	void LDA_IMM(); 
+	void LDA_IMM();
 	void LDA_ZPG();
 	void LDA_ZPX();
 	void LDA_ABS();
@@ -162,7 +163,7 @@ class CPU
 	void ORA_INY();
 
 	void BIT_ABS(); // Bit test
-	void BIT_ZPG(); 
+	void BIT_ZPG();
 
 	// Arithmetic
 	void ADC_IMM(); // Add w/ carry
@@ -192,11 +193,11 @@ class CPU
 	void CMP_XIN();
 	void CMP_INY();
 
-	void CPX_IMM(); 
+	void CPX_IMM();
 	void CPX_ZPG();
 	void CPX_ABS();
 
-	void CPY_IMM(); 
+	void CPY_IMM();
 	void CPY_ZPG();
 	void CPY_ABS();
 
@@ -297,9 +298,9 @@ class CPU
 /*0xC*/ &CPU::CPY_IMM,&CPU::CMP_XIN, ILL,		   ILL, &CPU::CPY_ZPG, 	&CPU::CMP_ZPG, &CPU::DEC_ZPG, ILL, &CPU::INY, &CPU::CMP_IMM, &CPU::DEX,   ILL, &CPU::CPY_ABS, 	&CPU::CMP_ABS, &CPU::DEC_ABS, ILL,
 /*0XD*/ &CPU::BNE,	  &CPU::CMP_INY, ILL,		   ILL, ILL,			&CPU::CMP_ZPX, &CPU::DEC_ZPX, ILL, &CPU::CLD, &CPU::CMP_ABY, ILL,		  ILL, ILL,				&CPU::CMP_ABX, &CPU::DEC_ABX, ILL,
 /*0XE*/ &CPU::CPX_IMM,&CPU::SBC_XIN, ILL, 		   ILL, &CPU::CPX_ZPG, 	&CPU::SBC_ZPG, &CPU::INC_ZPG, ILL, &CPU::INX, &CPU::SBC_IMM, &CPU::NOP,   ILL, &CPU::CPX_ABS,  	&CPU::SBC_ABS, &CPU::INC_ABS, ILL,
-/*0xF*/ &CPU::BEQ,    &CPU::SBC_INY, ILL,		   ILL, ILL,			&CPU::SBC_ZPX, &CPU::INC_ZPX, ILL, &CPU::SED, &CPU::SBC_ABY, ILL,		  ILL, ILL,				&CPU::SBC_ABX, &CPU::INC_ABX, ILL, 		 
+/*0xF*/ &CPU::BEQ,    &CPU::SBC_INY, ILL,		   ILL, ILL,			&CPU::SBC_ZPX, &CPU::INC_ZPX, ILL, &CPU::SED, &CPU::SBC_ABY, ILL,		  ILL, ILL,				&CPU::SBC_ABX, &CPU::INC_ABX, ILL,
 	};
-public:	
+public:
 	CPU(uint8_t freq = 1); // used to reserve memory and set frequency in MHz
 	bool load_prog(std::vector<u8> prog, int vec_size);
 	void run();

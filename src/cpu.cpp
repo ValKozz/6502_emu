@@ -1,13 +1,14 @@
 #include "cpu.h"
 #include <fstream>
 #include <iostream>
+
 #include <unistd.h>
 
 #define MAX_PROG_SIZE 0xFFFF - 0xC000
 
 #ifndef DEBUG
 #define DEBUG 0
-#else 
+#else
 #define DEBUG 1
 #endif
 
@@ -73,17 +74,30 @@
 	u8 cycles = 5;													\
 	u8 pt = read_byte(++pc);										\
 	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);	\
-	u16 addr = read_byte(base_addr + y);							\
+	u16 addr = base_addr + y;							\
 	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;			\
 	(reg) op read_byte(addr);										\
 	status_on_transfer((reg));										\
 	run_cycles(cycles);												\
 } while (0)
 
+#define BCOMP_STA(bit_pos, cmp_value) do {                                          \
+    u8 cycles = 2;                                                                  \
+    u8 bit_value = get_status((bit_pos));                                           \
+    ++pc;                                                                           \
+    if ((bit_value) == (cmp_value)) {                                               \
+        cycles += 1;                                                                \
+        u16 new_pc = pc + read_byte(pc);                                            \
+        if ((pc & 0xFF00) != (new_pc & 0xFF00)) cycles++;                           \
+        pc = new_pc;                                                                \
+    }                                                                               \
+    run_cycles(cycles);                                                             \
+} while (0)
 
-CPU::CPU(uint8_t freq) { 
+
+CPU::CPU(uint8_t freq) {
 	if (freq > 3) freq = 3;
-	 // 1 MHz = 1 000 000 Hz 
+	 // 1 MHz = 1 000 000 Hz
 	cycle_lenght = 1 / (1000000 * freq);
 	sta = 0;
 	x = 0;
@@ -130,7 +144,7 @@ CPU intitializes in 7 cycles
 	Cycles 1-3: CPU peforms 3 read cycles at stack $0100, &01FF, and $01FE
 	Cycles 4-5: CPU reads lo $FFFC and hi $FFFD and loads it into PC
 	Cycles 6:   First instruction set is fetched and executed
-	
+
 */
 void CPU::reset() {
 	DEBMSG("Running Initialization routine PC set to", 0xFFFC);
@@ -145,7 +159,7 @@ void CPU::reset() {
 	u8 lo = read_byte(0xFFFC);
 	u8 hi = read_byte(0xFFFD);
 	pc = (hi << 8 | lo) - 1;
-	
+
 	DEBMSG("Set PC to", pc);
 	run_cycles(3); // +1 for fetch
 	fetch();
@@ -175,12 +189,18 @@ u8 CPU::pop_stack() {
 
 u8 CPU::peek_stack() {
 	u8 value = read_byte(0x100 & sp);
-	return value;	
+	return value;
 }
 
-// helpers to set status register, either 0 or 1
+// helpers to set and get status register, either 0 or 1
 void CPU::set_status(u8 bit_pos, u8 value) {
 	sta |= (bit_pos << value);
+}
+
+u8 CPU::get_status(u8 bit_pos) {
+    // get only the bit in the position and mask it
+    u8 value = (sta >> bit_pos) & 0x1;
+    return value;
 }
 
 void CPU::status_on_transfer(u8 reg) {
@@ -204,16 +224,10 @@ void CPU::write_byte(u16 addr, u8 data) {
 }
 
 u8 CPU::read_byte(u16 addr) {
-	if (addr < MEMSIZE+1) {
-		return memory[addr];
+    // should wrap around
+	return memory[addr];
 	}
-	else {
-		fprintf(stderr, "Attempted to read out of memory bounds @%04X\n", addr);
-		dump_mem();
-		running = 0;
-		return 1;
-	}
-}
+
 
 
 // public run TODO
@@ -221,11 +235,10 @@ void CPU::run() {
 	reset();
 	// testing
 	for (int i = 0; i < 5; i++) fetch();
-	
 	dump_mem();
 }
 
-// TODO 
+// TODO
 void CPU::fetch() {
 	pc+=1;
 	// temp for testing
@@ -243,8 +256,8 @@ void CPU::LDA_ZPX() {ZPA_OP(ac, =, x);}
 void CPU::LDA_ABS() {ABS_OP(ac, =);}
 void CPU::LDA_ABX() {ABA_OP(ac, =, x);}
 void CPU::LDA_ABY() {ABA_OP(ac, =, y);}
-void CPU::LDA_XIN() {XIN_OP(ac, =);} 
-void CPU::LDA_INY() {INY_OP(ac, =);} 
+void CPU::LDA_XIN() {XIN_OP(ac, =);}
+void CPU::LDA_INY() {INY_OP(ac, =);}
 
 void CPU::LDX_IMM() {IMM_OP(x, =);}
 void CPU::LDX_ZPG() {ZPG_OP(x, =);}
@@ -275,7 +288,7 @@ void CPU::STA_ZPX() {
 void CPU::STA_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, ac);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 void CPU::STA_ABX() {
@@ -292,7 +305,7 @@ void CPU::STA_ABY() {
 
 void CPU::STA_XIN() {
 	u8 pt = read_byte(++pc);
-	u8 pt_lo_addr = pt + x; 
+	u8 pt_lo_addr = pt + x;
 	u8 pt_hi_addr = pt_lo_addr + 1;
 	u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
 
@@ -304,7 +317,7 @@ void CPU::STA_INY() {
 	u8 pt = read_byte(++pc);
 	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
 	u16 addr = read_byte(base_addr + y);
-	
+
 	write_byte(addr, ac);
 
 	run_cycles(6);
@@ -326,7 +339,7 @@ void CPU::STX_ZPY() {
 void CPU::STX_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, x);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 
@@ -345,7 +358,7 @@ void CPU::STY_ZPX() {
 void CPU::STY_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, y);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 
@@ -363,7 +376,7 @@ void CPU::TAY() {
 }
 
 void CPU::TXA() {
-	ac = x;	
+	ac = x;
 	status_on_transfer(ac);
 	run_cycles(2);
 }
@@ -389,23 +402,23 @@ void CPU::TXS() {
 void CPU::PHA() {
 	push_stack(ac);
 	run_cycles(3);
-} 
+}
 
 void CPU::PHP() {
 	push_stack(sta);
 	run_cycles(3);
-} 
+}
 
 void CPU::PLA() {
 	ac = pop_stack();
 	status_on_transfer(ac);
 	run_cycles(4);
-} 
+}
 
 void CPU::PLP() {
 	sta = pop_stack();
 	run_cycles(4);
-} 
+}
 
 // // Logical
 void CPU::AND_IMM() {IMM_OP(ac, &=);}
@@ -480,7 +493,8 @@ void CPU::ADC_IMM() {
 
 // void CPU::ADC_ZPX() {
 
-// }
+// }	u16 addr = read_byte(++pc) << 8| read_byte(pc);
+
 
 // void CPU::ADC_ABS() {
 
@@ -521,11 +535,11 @@ void CPU::ADC_IMM() {
 // void CPU::CMP_XIN();
 // void CPU::CMP_INY();
 
-// void CPU::CPX_IMM(); 
+// void CPU::CPX_IMM();
 // void CPU::CPX_ZPG();
 // void CPU::CPX_ABS();
 
-// void CPU::CPY_IMM(); 
+// void CPU::CPY_IMM();
 // void CPU::CPY_ZPG();
 // void CPU::CPY_ABS();
 
@@ -571,33 +585,125 @@ void CPU::ADC_IMM() {
 // void CPU::ROR_ABS();
 // void CPU::ROR_ABX();
 
-// // JMP and Calls, JSR stores the pc onto the stack
-// void CPU::JMP_ABS();	// JMP to another location (pc)
-// void CPU::JMP_IND();
+// JMP and Calls, JSR stores the pc onto the stack
+void CPU::JMP_ABS() {
+    u16 addr = read_byte(++pc) << 8 | read_byte(pc);
+    pc = addr;
+    run_cycles(3);
+}
 
-// void CPU::JSR(); // Jump to subroutine
-// void CPU::RTS(); // Return from subroutine
+// on original 6502, it does not fet correctly when hitting a page boundary
+// instead most sig byte is take from XX00
+// TODO - implement the bug
+void CPU::JMP_IND() {
+    u8 pt = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
+	u16 addr = (u16)(read_byte(base_addr+1) << 8) | read_byte(base_addr);
+	pc = addr;
+	run_cycles(5);
+}
+
+// push return point - 1 to stack, put pc on address of subroutine
+void CPU::JSR() {
+    u16 addr = read_byte(++pc) << 8 | read_byte(pc);
+    // push pc's current position, as +1 would be the return
+    push_stack(pc);
+    pc = addr;
+    run_cycles(6);
+}
+
+// Return from subroutine
+void CPU::RTS() {
+    pc = pop_stack();
+    run_cycles(6);
+}
 
 // // Branch, moving PC if condition is met
-// void CPU::BCC();
-// void CPU::BCS();
-// void CPU::BEQ();
-// void CPU::BMI();
-// void CPU::BNE();
-// void CPU::BPL();
-// void CPU::BVC();
-// void CPU::BVS();
+void CPU::BCC() {
+    BCOMP_STA(CARRY_POS, 0);
+}
 
-// // status flag change
-// void CPU::CLC();
-// void CPU::CLD();
-// void CPU::CLI();
-// void CPU::CLV();
-// void CPU::SEC();
-// void CPU::SED();
-// void CPU::SEI();
+void CPU::BCS() {
+    BCOMP_STA(CARRY_POS, 1);
+}
 
-// // Sys functions
-// void CPU::BRK();
-// void CPU::NOP();
-// void CPU::RTI();
+void CPU::BEQ() {
+    BCOMP_STA(ZERO_POS, 1);
+}
+
+void CPU::BMI() {
+    BCOMP_STA(NEG_POS, 1);
+}
+
+void CPU::BNE() {
+    BCOMP_STA(ZERO_POS, 0);
+}
+
+void CPU::BPL() {
+    BCOMP_STA(NEG_POS, 0);
+}
+
+void CPU::BVC() {
+    BCOMP_STA(OVRFL_POS, 0);
+}
+
+void CPU::BVS() {
+    BCOMP_STA(OVRFL_POS, 1);
+}
+
+// status flag change
+void CPU::CLC() {
+    set_status(CARRY_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLD() {
+    set_status(DECB_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLI() {
+    set_status(INTDIS_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLV() {
+    set_status(OVRFL_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::SEC() {
+    set_status(CARRY_POS, 1);
+    run_cycles(2);
+}
+
+void CPU::SED() {
+    set_status(DECB_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::SEI() {
+    set_status(INTDIS_POS, 0);
+    run_cycles(2);
+}
+
+// Sys functions
+// Store status to stack and put pc to FFFE, set BRK in status to 1
+// TODO, get a clearer picture if this is correct
+void CPU::BRK() {
+    push_stack(sta);
+    pc = 0xFFFE;
+    set_status(BRKB_POS, 1);
+    run_cycles(7);
+}
+
+void CPU::NOP() {
+    run_cycles(2);
+    ++pc;
+}
+// Pull CPU status from stack after interupt
+void CPU::RTI() {
+    u8 restored_status = pop_stack();
+    sta = restored_status;
+    run_cycles(6);
+}
