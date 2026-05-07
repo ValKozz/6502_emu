@@ -115,7 +115,7 @@
 // TODO - fix
 #define CMP_ZPR_OP(reg, added_reg) do {                 \
     u8 addr = read_byte(++pc) + (added_reg);            \
-    u8 temp = (reg) - read_byte(addr | 0x00FF);         \                          \
+    u8 temp = (reg) - read_byte(addr | 0x00FF);         \
     status_on_cmp(temp);                                \
     run_cycles(3);                                      \
 } while (0)
@@ -249,6 +249,10 @@ void CPU::status_on_cmp(u8 value) {
             set_status(NEG_POS, 0);
             set_status(CARRY_POS, 1);
         }
+    }
+    else {
+        set_status(ZERO_POS, 1);
+    }
 }
 
 // helpers to access memeory
