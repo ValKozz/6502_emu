@@ -70,6 +70,7 @@ class CPU
 	void set_status(u8 bit_pos, u8 value);
 	u8 get_status(u8 bit_pos);
 	void status_on_transfer(u8 reg);
+	void status_on_cmp(u8 value);
 
 	void push_stack(u8 value);
 	u8 pop_stack();

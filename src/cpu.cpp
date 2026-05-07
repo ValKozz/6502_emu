@@ -46,7 +46,7 @@
 } while (0)
 
 #define ABS_OP(reg, op) do {							\
-	u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);	\
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);	\
 	(reg) op read_byte(addr);							\
 	status_on_transfer((reg));							\
 	run_cycles(4);										\
@@ -54,7 +54,7 @@
 
 #define ABA_OP(reg, op, added_reg) do {					\
 	u8 cycles = 4;										\
-	u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);	\
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);	\
 	if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;\
 	(reg) op read_byte(addr + (added_reg));				\
 	status_on_transfer((reg));							\
@@ -94,54 +94,29 @@
     }                                                                               \
     run_cycles(cycles);                                                             \
 } while (0)
+
 // TODO - fix, maybe work on status on transfer to handle this more efficiently
 #define CMP_IMM_OP(reg) do {                            \
     u8 temp = (reg) - read_byte(++pc);                  \
-                                                        \
-    if (temp > 0) set_status(CARRY_POS, 1);             \
-    else set_status(CARRY_POS, 0);                      \
-                                                        \
-    if (temp == 0) set_status(ZERO_POS, 1);             \
-    else set_status(ZERO_POS, 0);                       \
-                                                        \
-    u8 b7 = (temp >> 7) & 0x1;                          \
-    if (b7) set_status(NEG_POS, 1);                     \
-    else set_status(NEG_POS, 0);                        \
+    status_on_cmp(temp);                                \
     run_cycles(2);                                      \
 } while(0)
+
 // TODO - fix
 #define CMP_ABS_OP(reg, added_reg) do {                             \
     u8 cycles = 4;                                                  \
-    u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);              \
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);              \
    	if ((addr & 0xFF00) > ((addr+(added_reg)) & 0xFF00)) cycles++;  \
     u8 temp = (reg) - read_byte(addr + (added_reg));                \
-                                                                    \
-    if (temp > 0) set_status(CARRY_POS, 1);                         \
-    else set_status(CARRY_POS, 0);                                  \
-                                                                    \
-    if (temp == 0) set_status(ZERO_POS, 1);                         \
-    else set_status(ZERO_POS, 0);                                   \
-                                                                    \
-    u8 b7 = (temp >> 7) & 0x1;                                      \
-    if (b7) set_status(NEG_POS, 1);                                 \
-    else set_status(NEG_POS, 0);                                    \
+    status_on_cmp(temp);                                            \
     run_cycles(cycles);                                             \
 } while (0)
 
 // TODO - fix
 #define CMP_ZPR_OP(reg, added_reg) do {                 \
     u8 addr = read_byte(++pc) + (added_reg);            \
-    u8 temp = (reg) - read_byte(addr | 0x00FF);         \
-    u8 b7 = (temp >> 7) & 0x1;                          \
-                                                        \
-    if (b7 == 0 && temp > 0) set_status(CARRY_POS, 1);  \
-    else set_status(CARRY_POS, 0);                      \
-                                                        \
-    if (temp == 0) set_status(ZERO_POS, 1);             \
-    else set_status(ZERO_POS, 0);                       \
-                                                        \
-    if (b7) set_status(NEG_POS, 1);                     \
-    else set_status(NEG_POS, 0);                        \
+    u8 temp = (reg) - read_byte(addr | 0x00FF);         \                          \
+    status_on_cmp(temp);                                \
     run_cycles(3);                                      \
 } while (0)
 
@@ -261,6 +236,21 @@ void CPU::status_on_transfer(u8 reg) {
 	else set_status(ZERO_POS, 0);
 }
 
+void CPU::status_on_cmp(u8 value) {
+    if (value != 0) {
+        set_status(ZERO_POS, 0);
+
+        u8 b7 = (value >> 7) & 0x1;
+        if (b7) {
+            set_status(NEG_POS, 1);
+            set_status(CARRY_POS, 0);
+        }
+        else {
+            set_status(NEG_POS, 0);
+            set_status(CARRY_POS, 1);
+        }
+}
+
 // helpers to access memeory
 void CPU::write_byte(u16 addr, u8 data) {
 	if (addr < MEMSIZE) {
@@ -340,7 +330,7 @@ void CPU::STA_ABS() {
 }
 
 void CPU::STA_ABX() {
-	u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
 	write_byte(addr + x, ac);
 	run_cycles(5);
 }
@@ -516,7 +506,7 @@ void CPU::BIT_ZPG() {
 }
 
 void CPU::BIT_ABS() {
-	u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
 	u8 oper = read_byte(addr);
 
 	u8 b7 = oper >> 7;
@@ -574,24 +564,13 @@ void CPU::ADC_IMM() {
 // void CPU::SBC_XIN();
 // void CPU::SBC_INY();
 
-void CPU::CMP_IMM() {
-    CMP_IMM_OP(ac);
-}
-void CPU::CMP_ZPG() {
-    CMP_ZPR_OP(ac, 0);
-}
-void CPU::CMP_ZPX() {
-    CMP_ZPR_OP(ac, x);
-}
-void CPU::CMP_ABS() {
-    CMP_ABS_OP(ac, 0);
-}
-void CPU::CMP_ABX() {
-    CMP_ABS_OP(ac, x);
-}
-void CPU::CMP_ABY() {
-    CMP_ABS_OP(ac, y);
-}
+void CPU::CMP_IMM() {CMP_IMM_OP(ac);}
+void CPU::CMP_ZPG() {CMP_ZPR_OP(ac, 0);}
+void CPU::CMP_ZPX() {CMP_ZPR_OP(ac, x);}
+void CPU::CMP_ABS() {CMP_ABS_OP(ac, 0);}
+void CPU::CMP_ABX() {CMP_ABS_OP(ac, x);}
+void CPU::CMP_ABY() {CMP_ABS_OP(ac, y);}
+
 void CPU::CMP_XIN() {
     u8 pt = read_byte(++pc);
     u8 pt_lo_addr = pt+x;
@@ -610,6 +589,7 @@ void CPU::CMP_XIN() {
     else set_status(NEG_POS, 0);
     run_cycles(6);
 }
+
 void CPU::CMP_INY() {
     u8 cycles = 5;
     u8 pt = read_byte(++pc);
@@ -632,54 +612,95 @@ void CPU::CMP_INY() {
 	run_cycles(cycles);
 }
 
-// void CPU::CPX_IMM();
-// void CPU::CPX_ZPG();
-// void CPU::CPX_ABS();
+void CPU::CPX_IMM() {CMP_IMM_OP(x);}
+void CPU::CPX_ZPG() {CMP_ZPR_OP(x, 0);}
+void CPU::CPX_ABS() {CMP_ABS_OP(x, 0);}
 
-// void CPU::CPY_IMM();
-// void CPU::CPY_ZPG();
-// void CPU::CPY_ABS();
+void CPU::CPY_IMM() {CMP_IMM_OP(y);}
+void CPU::CPY_ZPG() {CMP_ZPR_OP(y, 0);}
+void CPU::CPY_ABS() {CMP_ABS_OP(y, 0);}
 
-// // Increments and decrements
-// void CPU::INC_ZPG();
-// void CPU::INC_ZPX();
-// void CPU::INC_ABS();
-// void CPU::INC_ABX();
+
+// Increments and decrements
+void CPU::INC_ZPG() {
+    u8 addr = ++pc;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(5);
+}
+
+void CPU::INC_ZPX() {
+    u8 addr = ++pc + x;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::INC_ABS() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::INC_ABX() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    addr += x;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(7);
+}
 
 void CPU::INX() {
     x++;
-    u8 b7 = (x >> 7) & 0x1;
-    if (b7) set_status(NEG_POS, 1);
-    if (x == 0) set_status(ZERO_POS, 1);
+    status_on_transfer(x);
     run_cycles(2);
 }
 
 void CPU::INY() {
     y++;
-    u8 b7 = (y >> 7) & 0x1;
-    if (b7) set_status(NEG_POS, 1);
-    if (y == 0) set_status(ZERO_POS, 1);
+    status_on_transfer(y);
     run_cycles(2);
 }
 
-// void CPU::DEC_ZPG();
-// void CPU::DEC_ZPX();
-// void CPU::DEC_ABS();
-// void CPU::DEC_ABX();
+void CPU::DEC_ZPG() {
+    u8 addr = ++pc;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(5);
+}
+
+void CPU::DEC_ZPX() {
+    u8 addr = ++pc + x;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::DEC_ABS() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::DEC_ABX() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    addr += x;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(7);
+}
 
 void CPU::DEX() {
     x--;
-    u8 b7 = (x >> 7) & 0x1;
-    if (b7) set_status(NEG_POS, 1);
-    if (x == 0) set_status(ZERO_POS, 1);
+    status_on_transfer(x);
     run_cycles(2);
 }
 
 void CPU::DEY() {
     y--;
-    u8 b7 = (y >> 7) & 0x1;
-    if (b7) set_status(NEG_POS, 1);
-    if (y == 0) set_status(ZERO_POS, 1);
+    status_on_transfer(y);
     run_cycles(2);
 }
 
@@ -710,7 +731,7 @@ void CPU::DEY() {
 
 // JMP and Calls, JSR stores the pc onto the stack
 void CPU::JMP_ABS() {
-    u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
     pc = addr;
     run_cycles(3);
 }
@@ -728,7 +749,7 @@ void CPU::JMP_IND() {
 
 // push return point - 1 to stack, put pc on address of subroutine
 void CPU::JSR() {
-    u16 addr = read_byte(pc+1) << 8 | read_byte(pc++);
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
     // push pc's current position, as +1 would be the return
     push_stack(pc);
     pc = addr;
@@ -741,38 +762,15 @@ void CPU::RTS() {
     run_cycles(6);
 }
 
-// // Branch, moving PC if condition is met
-void CPU::BCC() {
-    BCOMP_STA(CARRY_POS, 0);
-}
-
-void CPU::BCS() {
-    BCOMP_STA(CARRY_POS, 1);
-}
-
-void CPU::BEQ() {
-    BCOMP_STA(ZERO_POS, 1);
-}
-
-void CPU::BMI() {
-    BCOMP_STA(NEG_POS, 1);
-}
-
-void CPU::BNE() {
-    BCOMP_STA(ZERO_POS, 0);
-}
-
-void CPU::BPL() {
-    BCOMP_STA(NEG_POS, 0);
-}
-
-void CPU::BVC() {
-    BCOMP_STA(OVRFL_POS, 0);
-}
-
-void CPU::BVS() {
-    BCOMP_STA(OVRFL_POS, 1);
-}
+// Branch, moving PC if condition is met
+void CPU::BCC() {BCOMP_STA(CARRY_POS, 0);}
+void CPU::BCS() {BCOMP_STA(CARRY_POS, 1);}
+void CPU::BEQ() {BCOMP_STA(ZERO_POS, 1);}
+void CPU::BMI() {BCOMP_STA(NEG_POS, 1);}
+void CPU::BNE() {BCOMP_STA(ZERO_POS, 0);}
+void CPU::BPL() {BCOMP_STA(NEG_POS, 0);}
+void CPU::BVC() {BCOMP_STA(OVRFL_POS, 0);}
+void CPU::BVS() {BCOMP_STA(OVRFL_POS, 1);}
 
 // status flag change
 void CPU::CLC() {
