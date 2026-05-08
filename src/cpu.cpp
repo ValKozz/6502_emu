@@ -71,15 +71,16 @@
 	run_cycles(6);										\
 } while (0)
 
-#define INY_OP(reg, op) do {										\
-	u8 cycles = 5;													\
-	u8 pt = read_byte(++pc);										\
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);	\
-	u16 addr = base_addr + y;						            	\
-	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;			\
-	(reg) op read_byte(addr);										\
-	status_on_transfer((reg));										\
-	run_cycles(cycles);												\
+#define INY_OP(reg, op) do {										    \
+	u8 cycles = 5;													    \
+	u8 pt_lo_addr = read_byte(++pc);								    \
+	u8 pt_hi_addr = read_byte(++pc);                                    \
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);\
+	u16 addr = base_addr + y;						            	    \
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;			    \
+	(reg) op read_byte(addr);										    \
+	status_on_transfer((reg));										    \
+	run_cycles(cycles);												    \
 } while (0)
 
 #define BCOMP_STA(bit_pos, cmp_value) do {                                          \
@@ -95,29 +96,66 @@
     run_cycles(cycles);                                                             \
 } while (0)
 
-// TODO - fix, maybe work on status on transfer to handle this more efficiently
 #define CMP_IMM_OP(reg) do {                            \
     u8 temp = (reg) - read_byte(++pc);                  \
     status_on_cmp(temp);                                \
     run_cycles(2);                                      \
 } while(0)
 
-// TODO - fix
 #define CMP_ABS_OP(reg, added_reg) do {                             \
     u8 cycles = 4;                                                  \
-    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);              \
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);       \
    	if ((addr & 0xFF00) > ((addr+(added_reg)) & 0xFF00)) cycles++;  \
     u8 temp = (reg) - read_byte(addr + (added_reg));                \
     status_on_cmp(temp);                                            \
     run_cycles(cycles);                                             \
 } while (0)
 
-// TODO - fix
 #define CMP_ZPR_OP(reg, added_reg) do {                 \
     u8 addr = read_byte(++pc) + (added_reg);            \
     u8 temp = (reg) - read_byte(addr | 0x00FF);         \
     status_on_cmp(temp);                                \
     run_cycles(3);                                      \
+} while (0)
+
+// Body for the ADC instructions
+#define ADC_BODY(operand, cycles) do {                  \
+    /* collect bits 7, to check for overflow */         \
+    u8 ac_b7 = (ac >> 7) & 0x1;                         \
+    u8 oper_b7 = ((operand) >> 7) & 0x1;                \
+                                                        \
+    u16 res = ac + (operand) + get_status(CARRY_POS);   \
+                                                        \
+    u8 res_b7 = (res >> 7) & 0x1;                       \
+    u8 new_carry = (res >> 8) & 0x1;                    \
+    set_status(CARRY_POS, new_carry);                   \
+                                                        \
+    if ((ac_b7 != oper_b7) && (res_b7 != ac_b7)){       \
+        set_status(OVRFL_POS, 1);                       \
+    }                                                   \
+    else set_status(OVRFL_POS, 0);                      \
+    ac = (res & 0xFF);                                  \
+    status_on_transfer(ac);                             \
+    run_cycles((cycles));                               \
+} while (0)
+
+#define SBC_BODY(operand, cycles) do {                          \
+    /* collect bits 7, to check for overflow */                 \
+    u8 ac_b7 = (ac >> 7) & 0x1;                                 \
+    u8 oper_b7 = ((operand) >> 7) & 0x1;                        \
+                                                                \
+    u16 res = ac - (operand) - (get_status(CARRY_POS) ? 0 : 1); \
+                                                                \
+    u8 res_b7 = (res >> 7) & 0x1;                               \
+    set_status(CARRY_POS, (res < 0x100) ? 0 : 1);               \
+                                                                \
+    if ((ac_b7 != oper_b7) && (res_b7 != ac_b7)){               \
+        set_status(OVRFL_POS, 1);                               \
+    }                                                           \
+    else set_status(OVRFL_POS, 0);                              \
+    ac = (res & 0xFF);                                          \
+    status_on_transfer(ac);                                     \
+    run_cycles((cycles));                                       \
 } while (0)
 
 CPU::CPU(uint8_t freq) {
@@ -189,7 +227,6 @@ void CPU::reset() {
 	run_cycles(3); // +1 for fetch
 	fetch();
 }
-
 
 void CPU::run_cycles(int cycles) {
 	for (int i = 0; i < cycles; i++) {
@@ -356,8 +393,9 @@ void CPU::STA_XIN() {
 }
 
 void CPU::STA_INY() {
-	u8 pt = read_byte(++pc);
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
 	u16 addr = read_byte(base_addr + y);
 
 	write_byte(addr, ac);
@@ -523,47 +561,118 @@ void CPU::BIT_ABS() {
 
 // Arithmetic
 void CPU::ADC_IMM() {
-	// TODO
+    u8 operand = read_byte(++pc);
+    ADC_BODY(operand, 2);
 }
 
-// void CPU::ADC_ZPG() {
+void CPU::ADC_ZPG() {
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 3);
+}
 
-// }
+void CPU::ADC_ZPX() {
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr + x);
+    ADC_BODY(operand, 4);
+}
 
-// void CPU::ADC_ZPX() {
+void CPU::ADC_ABS() {
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 4);
+}
 
-// }
+void CPU::ADC_ABX() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    ADC_BODY(operand, cycles);
+}
 
+void CPU::ADC_ABY() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+y) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+y);
+    ADC_BODY(operand, cycles);
+}
 
-// void CPU::ADC_ABS() {
+void CPU::ADC_XIN() {
+    u8 pt = read_byte(++pc);
+    u8 pt_lo_addr = pt+x;
+    u8 pt_hi_addr = pt_lo_addr + 1;
+    u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 6);
+}
 
-// }
+void CPU::ADC_INY() {
+    u8 cycles = 5;
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	u16 addr = base_addr + y;
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
+	u8 operand = read_byte(addr);
+	ADC_BODY(operand, cycles);
+}
 
-// void CPU::ADC_ABX() {
-
-// }
-
-// void CPU::ADC_ABY() {
-
-// }
-
-// void CPU::ADC_XIN() {
-
-// }
-
-// void CPU::ADC_INY() {
-
-// }
-
-
-// void CPU::SBC_IMM();	// Substr w/ carry
-// void CPU::SBC_ZPG();
-// void CPU::SBC_ZPX();
-// void CPU::SBC_ABS();
-// void CPU::SBC_ABX();
-// void CPU::SBC_ABY();
-// void CPU::SBC_XIN();
-// void CPU::SBC_INY();
+// Substr w/ carry
+void CPU::SBC_IMM() {
+    u8 operand = read_byte(++pc);
+    SBC_BODY(operand, 2);
+}
+void CPU::SBC_ZPG() {
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 3);
+}
+void CPU::SBC_ZPX() {
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 4);
+}
+void CPU::SBC_ABS() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_ABX() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_ABY() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+y) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+y);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_XIN() {
+    u8 pt = read_byte(++pc);
+    u8 pt_lo_addr = pt+x;
+    u8 pt_hi_addr = pt_lo_addr + 1;
+    u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 6);
+}
+void CPU::SBC_INY() {
+    u8 cycles = 5;
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	u16 addr = base_addr + y;
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
+	u8 operand = read_byte(addr);
+	SBC_BODY(operand, cycles);
+}
 
 void CPU::CMP_IMM() {CMP_IMM_OP(ac);}
 void CPU::CMP_ZPG() {CMP_ZPR_OP(ac, 0);}
@@ -593,8 +702,9 @@ void CPU::CMP_XIN() {
 
 void CPU::CMP_INY() {
     u8 cycles = 5;
-    u8 pt = read_byte(++pc);
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
+    u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
 	u16 addr = base_addr + y;
 
 	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
@@ -917,8 +1027,9 @@ void CPU::JMP_ABS() {
 // instead most sig byte is take from XX00
 // TODO - implement the bug
 void CPU::JMP_IND() {
-    u8 pt = read_byte(++pc);
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
+    u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
 	u16 addr = (u16)(read_byte(base_addr+1) << 8) | read_byte(base_addr);
 	pc = addr;
 	run_cycles(5);
