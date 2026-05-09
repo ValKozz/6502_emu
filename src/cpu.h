@@ -280,9 +280,9 @@ class CPU
 	void execute();
 
 	using op_func = void (CPU::*)();
-	static constexpr op_func ILL = &CPU::NOP;
+	op_func ILL = &CPU::NOP;
 
-	static constexpr std::array<op_func, 256> opcode_table = {
+	std::array<op_func, 256> opcode_table = {
 /*  	0x0 			0x1 		 0x2    	   0x3  0x4 			0x5  		   0x6			  0x7  0x8		  0x9			 0xA 		  0xB  0xC				0xD 		   0xE			  0XF*/
 /*0x0*/ &CPU::BRK,    &CPU::ORA_XIN, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPG, &CPU::ASL_ZPG, ILL, &CPU::PHP, &CPU::ORA_IMM, &CPU::ASL_A, ILL, ILL,		 		&CPU::ORA_ABS, &CPU::ASL_ABS, ILL,
 /*0x1*/ &CPU::BPL,    &CPU::ORA_INY, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPX, &CPU::ASL_ZPX, ILL, &CPU::CLC, &CPU::ORA_ABY, ILL,		  ILL, ILL, 			&CPU::ORA_ABX, &CPU::ASL_ABX, ILL,

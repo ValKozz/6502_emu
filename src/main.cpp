@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -22,18 +23,23 @@ int main(int argc, char **argv) {
 
 	file.seekg(0, ios::end);
 	streampos fsize = file.tellg();
+	if (fsize < 0) {
+        fprintf(stderr, "Error getting file size\n");
+	    file.close();
+		return 1;
+	}
+
 	file.seekg(0, ios::beg);
 	prog.resize(fsize);
-
+	// TODO - fix, not necessery to copy to RAM
 	for (int i = 0; i < fsize; i++) {
 		file.read((char*)&buffer, sizeof(buffer));
 		prog.push_back(buffer);
 	}
+
 	file.close();
 
 	CPU _6502(1);
-	_6502.load_prog(prog, prog.size());
-	_6502.run();
-
+	if (_6502.load_prog(prog, prog.size())) _6502.run();
 	return 0;
 }

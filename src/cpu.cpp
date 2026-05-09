@@ -5,7 +5,7 @@
 
 #include <unistd.h>
 
-#define MAX_PROG_SIZE 0xFFFF - 0xC000
+#define MAX_PROG_SIZE 0xFFFF
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -321,11 +321,16 @@ void CPU::run() {
 void CPU::fetch() {
 	pc+=1;
 	// temp for testing
-	DEBMSG("Fetched", memory[pc] << 8 | memory[pc]);
+	DEBMSG("Fetched", memory[pc]);
+	execute();
 }
 
 // TODO
-void CPU::execute(){}
+void CPU::execute() {
+    u8 op_type = memory[pc];
+    void (CPU::*OP)(void) = opcode_table[op_type];
+    (this->*OP)();
+}
 
 // TODO
 // Load/Store operations
