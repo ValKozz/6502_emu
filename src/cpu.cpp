@@ -1,13 +1,15 @@
 #include "cpu.h"
+#include <csetjmp>
 #include <fstream>
 #include <iostream>
+
 #include <unistd.h>
 
-#define MAX_PROG_SIZE 0xFFFF - 0xC000
+#define MAX_PROG_SIZE 0xFFFF
 
 #ifndef DEBUG
 #define DEBUG 0
-#else 
+#else
 #define DEBUG 1
 #endif
 
@@ -44,7 +46,7 @@
 } while (0)
 
 #define ABS_OP(reg, op) do {							\
-	u16 addr = read_byte(++pc) << 8 | read_byte(pc);	\
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);	\
 	(reg) op read_byte(addr);							\
 	status_on_transfer((reg));							\
 	run_cycles(4);										\
@@ -52,13 +54,12 @@
 
 #define ABA_OP(reg, op, added_reg) do {					\
 	u8 cycles = 4;										\
-	u16 addr = read_byte(++pc) << 8 | read_byte(pc);	\
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);	\
 	if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;\
 	(reg) op read_byte(addr + (added_reg));				\
 	status_on_transfer((reg));							\
 	run_cycles(cycles);									\
 } while (0)
-
 
 #define XIN_OP(reg, op) do {							\
 	u8 pt = read_byte(++pc);							\
@@ -70,21 +71,96 @@
 	run_cycles(6);										\
 } while (0)
 
-#define INY_OP(reg, op) do {										\
-	u8 cycles = 5;													\
-	u8 pt = read_byte(++pc);										\
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);	\
-	u16 addr = read_byte(base_addr + y);							\
-	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;			\
-	(reg) op read_byte(addr);										\
-	status_on_transfer((reg));										\
-	run_cycles(cycles);												\
+#define INY_OP(reg, op) do {										    \
+	u8 cycles = 5;													    \
+	u8 pt_lo_addr = read_byte(++pc);								    \
+	u8 pt_hi_addr = read_byte(++pc);                                    \
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);\
+	u16 addr = base_addr + y;						            	    \
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;			    \
+	(reg) op read_byte(addr);										    \
+	status_on_transfer((reg));										    \
+	run_cycles(cycles);												    \
 } while (0)
 
+#define BCOMP_STA(bit_pos, cmp_value) do {                                          \
+    u8 cycles = 2;                                                                  \
+    u8 bit_value = get_status((bit_pos));                                           \
+    ++pc;                                                                           \
+    if ((bit_value) == (cmp_value)) {                                               \
+        cycles += 1;                                                                \
+        u16 new_pc = pc + read_byte(pc);                                            \
+        if ((pc & 0xFF00) != (new_pc & 0xFF00)) cycles++;                           \
+        pc = new_pc;                                                                \
+    }                                                                               \
+    run_cycles(cycles);                                                             \
+} while (0)
 
-CPU::CPU(uint8_t freq) { 
+#define CMP_IMM_OP(reg) do {                            \
+    u8 temp = (reg) - read_byte(++pc);                  \
+    status_on_cmp(temp);                                \
+    run_cycles(2);                                      \
+} while(0)
+
+#define CMP_ABS_OP(reg, added_reg) do {                             \
+    u8 cycles = 4;                                                  \
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);       \
+   	if ((addr & 0xFF00) > ((addr+(added_reg)) & 0xFF00)) cycles++;  \
+    u8 temp = (reg) - read_byte(addr + (added_reg));                \
+    status_on_cmp(temp);                                            \
+    run_cycles(cycles);                                             \
+} while (0)
+
+#define CMP_ZPR_OP(reg, added_reg) do {                 \
+    u8 addr = read_byte(++pc) + (added_reg);            \
+    u8 temp = (reg) - read_byte(addr | 0x00FF);         \
+    status_on_cmp(temp);                                \
+    run_cycles(3);                                      \
+} while (0)
+
+// Body for the ADC instructions
+#define ADC_BODY(operand, cycles) do {                  \
+    /* collect bits 7, to check for overflow */         \
+    u8 ac_b7 = (ac >> 7) & 0x1;                         \
+    u8 oper_b7 = ((operand) >> 7) & 0x1;                \
+                                                        \
+    u16 res = ac + (operand) + get_status(CARRY_POS);   \
+                                                        \
+    u8 res_b7 = (res >> 7) & 0x1;                       \
+    u8 new_carry = (res >> 8) & 0x1;                    \
+    set_status(CARRY_POS, new_carry);                   \
+                                                        \
+    if ((ac_b7 != oper_b7) && (res_b7 != ac_b7)){       \
+        set_status(OVRFL_POS, 1);                       \
+    }                                                   \
+    else set_status(OVRFL_POS, 0);                      \
+    ac = (res & 0xFF);                                  \
+    status_on_transfer(ac);                             \
+    run_cycles((cycles));                               \
+} while (0)
+
+#define SBC_BODY(operand, cycles) do {                          \
+    /* collect bits 7, to check for overflow */                 \
+    u8 ac_b7 = (ac >> 7) & 0x1;                                 \
+    u8 oper_b7 = ((operand) >> 7) & 0x1;                        \
+                                                                \
+    u16 res = ac - (operand) - (get_status(CARRY_POS) ? 0 : 1); \
+                                                                \
+    u8 res_b7 = (res >> 7) & 0x1;                               \
+    set_status(CARRY_POS, (res < 0x100) ? 0 : 1);               \
+                                                                \
+    if ((ac_b7 != oper_b7) && (res_b7 != ac_b7)){               \
+        set_status(OVRFL_POS, 1);                               \
+    }                                                           \
+    else set_status(OVRFL_POS, 0);                              \
+    ac = (res & 0xFF);                                          \
+    status_on_transfer(ac);                                     \
+    run_cycles((cycles));                                       \
+} while (0)
+
+CPU::CPU(uint8_t freq) {
 	if (freq > 3) freq = 3;
-	 // 1 MHz = 1 000 000 Hz 
+	 // 1 MHz = 1 000 000 Hz
 	cycle_lenght = 1 / (1000000 * freq);
 	sta = 0;
 	x = 0;
@@ -131,13 +207,13 @@ CPU intitializes in 7 cycles
 	Cycles 1-3: CPU peforms 3 read cycles at stack $0100, &01FF, and $01FE
 	Cycles 4-5: CPU reads lo $FFFC and hi $FFFD and loads it into PC
 	Cycles 6:   First instruction set is fetched and executed
-	
+
 */
 void CPU::reset() {
 	DEBMSG("Running Initialization routine PC set to", 0xFFFC);
 	// Cycle 0
 	sp = 0x00;
-	set_status(INTDIS); // set interupt disable bit in status register
+	set_status(INTDIS_POS, 1); // set interupt disable bit in status register
 	run_cycles(1);
 	// Cycle 1-3
 	// Do nothing?
@@ -146,12 +222,11 @@ void CPU::reset() {
 	u8 lo = read_byte(0xFFFC);
 	u8 hi = read_byte(0xFFFD);
 	pc = (hi << 8 | lo) - 1;
-	
+
 	DEBMSG("Set PC to", pc);
 	run_cycles(3); // +1 for fetch
 	fetch();
 }
-
 
 void CPU::run_cycles(int cycles) {
 	for (int i = 0; i < cycles; i++) {
@@ -176,26 +251,46 @@ u8 CPU::pop_stack() {
 
 u8 CPU::peek_stack() {
 	u8 value = read_byte(0x100 & sp);
-	return value;	
+	return value;
 }
 
-// helpers to set status register, either 0 or 1
-void CPU::set_status(u8 bit) {
-	sta |= bit;
+// helpers to set and get status register, either 0 or 1
+void CPU::set_status(u8 bit_pos, u8 value) {
+	sta |= (bit_pos << value);
 }
 
-void CPU::unset_status(u8 bit) {
-	sta ^= bit;
+u8 CPU::get_status(u8 bit_pos) {
+    // get only the bit in the position and mask it
+    u8 value = (sta >> bit_pos) & 0x1;
+    return value;
 }
 
-void CPU::status_on_transfer(u16 reg) {
-	if (reg & (1 << 7)) set_status(NEG);
-	else unset_status(NEG);
+void CPU::status_on_transfer(u8 reg) {
+	if (reg & (0x1 << 7)) set_status(NEG_POS, 1);
+	else set_status(NEG_POS, 0);
 
-	if (reg == 0) set_status(ZERO);
-	else unset_status(ZERO);
+	if (reg == 0) set_status(ZERO_POS, 1);
+	else set_status(ZERO_POS, 0);
 }
 
+void CPU::status_on_cmp(u8 value) {
+    if (value != 0) {
+        set_status(ZERO_POS, 0);
+
+        u8 b7 = (value >> 7) & 0x1;
+        if (b7) {
+            set_status(NEG_POS, 1);
+            set_status(CARRY_POS, 0);
+        }
+        else {
+            set_status(NEG_POS, 0);
+            set_status(CARRY_POS, 1);
+        }
+    }
+    else {
+        set_status(ZERO_POS, 1);
+    }
+}
 
 // helpers to access memeory
 void CPU::write_byte(u16 addr, u8 data) {
@@ -210,38 +305,33 @@ void CPU::write_byte(u16 addr, u8 data) {
 }
 
 u8 CPU::read_byte(u16 addr) {
-	if (addr < MEMSIZE+1) {
-		return memory[addr];
-	}
-	else {
-		fprintf(stderr, "Attempted to read out of memory bounds @%04X\n", addr);
-		dump_mem();
-		running = 0;
-		return 1;
-	}
+    // should wrap around
+	return memory[addr];
 }
-
 
 // public run TODO
 void CPU::run() {
 	reset();
 	// testing
 	for (int i = 0; i < 5; i++) fetch();
-	
 	dump_mem();
 }
 
-// TODO 
+// TODO
 void CPU::fetch() {
 	pc+=1;
 	// temp for testing
-	DEBMSG("Fetched", memory[pc] << 8 | memory[pc]);
+	DEBMSG("Fetched", memory[pc]);
+	execute();
 }
 
 // TODO
-void CPU::execute(){}
+void CPU::execute() {
+    u8 op_type = memory[pc];
+    void (CPU::*OP)(void) = opcode_table[op_type];
+    (this->*OP)();
+}
 
-// TODO
 // Load/Store operations
 void CPU::LDA_IMM() {IMM_OP(ac, =);}
 void CPU::LDA_ZPG() {ZPG_OP(ac, =);}
@@ -249,8 +339,8 @@ void CPU::LDA_ZPX() {ZPA_OP(ac, =, x);}
 void CPU::LDA_ABS() {ABS_OP(ac, =);}
 void CPU::LDA_ABX() {ABA_OP(ac, =, x);}
 void CPU::LDA_ABY() {ABA_OP(ac, =, y);}
-void CPU::LDA_XIN() {XIN_OP(ac, =);} 
-void CPU::LDA_INY() {INY_OP(ac, =);} 
+void CPU::LDA_XIN() {XIN_OP(ac, =);}
+void CPU::LDA_INY() {INY_OP(ac, =);}
 
 void CPU::LDX_IMM() {IMM_OP(x, =);}
 void CPU::LDX_ZPG() {ZPG_OP(x, =);}
@@ -281,11 +371,11 @@ void CPU::STA_ZPX() {
 void CPU::STA_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, ac);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 void CPU::STA_ABX() {
-	u16 addr = read_byte(++pc) << 8 | read_byte(pc);
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
 	write_byte(addr + x, ac);
 	run_cycles(5);
 }
@@ -298,7 +388,7 @@ void CPU::STA_ABY() {
 
 void CPU::STA_XIN() {
 	u8 pt = read_byte(++pc);
-	u8 pt_lo_addr = pt + x; 
+	u8 pt_lo_addr = pt + x;
 	u8 pt_hi_addr = pt_lo_addr + 1;
 	u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
 
@@ -307,15 +397,14 @@ void CPU::STA_XIN() {
 }
 
 void CPU::STA_INY() {
-	u8 pt = read_byte(++pc);
-	u16 base_addr = (u16)(read_byte(pt+1) << 8) | read_byte(pt);
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
 	u16 addr = read_byte(base_addr + y);
-	
-	write_byte(addr, ac);
 
+	write_byte(addr, ac);
 	run_cycles(6);
 }
-
 
 void CPU::STX_ZPG() {
 	u8 addr = read_byte(++pc);
@@ -332,7 +421,7 @@ void CPU::STX_ZPY() {
 void CPU::STX_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, x);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 
@@ -351,11 +440,11 @@ void CPU::STY_ZPX() {
 void CPU::STY_ABS() {
 	u16 addr = read_byte(++pc) << 8| read_byte(pc);
 	write_byte(addr, y);
-	run_cycles(4); 
+	run_cycles(4);
 }
 
 
-// // Reg transfers Implied
+// Reg transfers Implied
 void CPU::TAX() {
 	x = ac;
 	status_on_transfer(x);
@@ -369,7 +458,7 @@ void CPU::TAY() {
 }
 
 void CPU::TXA() {
-	ac = x;	
+	ac = x;
 	status_on_transfer(ac);
 	run_cycles(2);
 }
@@ -380,7 +469,7 @@ void CPU::TYA() {
 	run_cycles(2);
 }
 
-// // Stack ops Implied
+// Stack ops Implied
 void CPU::TSX() {
 	x = sp;
 	status_on_transfer(x);
@@ -395,25 +484,28 @@ void CPU::TXS() {
 void CPU::PHA() {
 	push_stack(ac);
 	run_cycles(3);
-} 
+}
 
 void CPU::PHP() {
 	push_stack(sta);
+	set_status(BRKB_POS, 1);
 	run_cycles(3);
-} 
+}
 
 void CPU::PLA() {
 	ac = pop_stack();
 	status_on_transfer(ac);
 	run_cycles(4);
-} 
+}
 
 void CPU::PLP() {
 	sta = pop_stack();
+	// BRK flag is always masked and cleared on restore
+	set_status(BRKB_POS, 0);
 	run_cycles(4);
-} 
+}
 
-// // Logical
+// Logical
 void CPU::AND_IMM() {IMM_OP(ac, &=);}
 void CPU::AND_ZPG() {ZPG_OP(ac, &=);}
 void CPU::AND_ZPX() {ZPA_OP(ac, &=, x);}
@@ -441,7 +533,6 @@ void CPU::ORA_ABY() {ABA_OP(ac, |=, y);}
 void CPU::ORA_XIN() {XIN_OP(ac, |=);}
 void CPU::ORA_INY() {INY_OP(ac, |=);}
 
-
 /*
 bits 7 and 6 of operand are transfered to N and V
 Z is set by result of A AND operand
@@ -452,158 +543,585 @@ void CPU::BIT_ZPG() {
 
 	u8 b7 = oper >> 7;
 	u8 b6 = (oper >> 6) & 0x01;
-	b7 ? set_status(NEG) : unset_status(NEG);
-	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+	b7 ? set_status(NEG_POS, 1) : set_status(NEG_POS, 0);
+	b6 ? set_status(OVRFL_POS, 1) : set_status(OVRFL_POS, 0);
 
 	u8 res = ac & oper;
-	res ? set_status(ZERO) : unset_status(ZERO);
+	res ? set_status(ZERO_POS, 1) : set_status(ZERO_POS, 0);
 	run_cycles(3);
 }
 
 void CPU::BIT_ABS() {
-	u16 addr = read_byte(++pc) << 8 | read_byte(pc);
+	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
 	u8 oper = read_byte(addr);
 
 	u8 b7 = oper >> 7;
 	u8 b6 = (oper >> 6) & 0x1;
-	b7 ? set_status(NEG) : unset_status(NEG);
-	b6 ? set_status(OVRFL) : unset_status(OVRFL);
+	b7 ? set_status(NEG_POS, 1) : set_status(NEG_POS, 0);
+	b6 ? set_status(OVRFL_POS, 1) : set_status(OVRFL_POS, 0);
 
 	u8 res = ac & oper;
-	res ? set_status(ZERO) : unset_status(ZERO);
+	res ? set_status(ZERO_POS, 1) : set_status(ZERO_POS, 0);
 	run_cycles(3);
 	run_cycles(4);
 }
 
 // Arithmetic
 void CPU::ADC_IMM() {
-	IMM_OP();
+    u8 operand = read_byte(++pc);
+    ADC_BODY(operand, 2);
 }
 
 void CPU::ADC_ZPG() {
-
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 3);
 }
 
 void CPU::ADC_ZPX() {
-
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr + x);
+    ADC_BODY(operand, 4);
 }
 
 void CPU::ADC_ABS() {
-
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 4);
 }
 
 void CPU::ADC_ABX() {
-
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    ADC_BODY(operand, cycles);
 }
 
 void CPU::ADC_ABY() {
-
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+y) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+y);
+    ADC_BODY(operand, cycles);
 }
 
 void CPU::ADC_XIN() {
-
+    u8 pt = read_byte(++pc);
+    u8 pt_lo_addr = pt+x;
+    u8 pt_hi_addr = pt_lo_addr + 1;
+    u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+    u8 operand = read_byte(addr);
+    ADC_BODY(operand, 6);
 }
 
 void CPU::ADC_INY() {
-
+    u8 cycles = 5;
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	u16 addr = base_addr + y;
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
+	u8 operand = read_byte(addr);
+	ADC_BODY(operand, cycles);
 }
 
+// Substr w/ carry
+void CPU::SBC_IMM() {
+    u8 operand = read_byte(++pc);
+    SBC_BODY(operand, 2);
+}
+void CPU::SBC_ZPG() {
+    u8 addr = read_byte(++pc);
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 3);
+}
+void CPU::SBC_ZPX() {
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 4);
+}
+void CPU::SBC_ABS() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_ABX() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+x) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+x);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_ABY() {
+    u8 cycles = 4;
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    if ((addr & 0xFF00) > ((addr+y) & 0xFF00)) cycles++;
+    u8 operand = read_byte(addr+y);
+    SBC_BODY(operand, cycles);
+}
+void CPU::SBC_XIN() {
+    u8 pt = read_byte(++pc);
+    u8 pt_lo_addr = pt+x;
+    u8 pt_hi_addr = pt_lo_addr + 1;
+    u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+    u8 operand = read_byte(addr);
+    SBC_BODY(operand, 6);
+}
+void CPU::SBC_INY() {
+    u8 cycles = 5;
+	u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	u16 addr = base_addr + y;
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
+	u8 operand = read_byte(addr);
+	SBC_BODY(operand, cycles);
+}
 
-// void CPU::SBC_IMM();	// Substr w/ carry
-// void CPU::SBC_ZPG();
-// void CPU::SBC_ZPX();
-// void CPU::SBC_ABS();
-// void CPU::SBC_ABX();
-// void CPU::SBC_ABY();
-// void CPU::SBC_XIN();
-// void CPU::SBC_INY();
+void CPU::CMP_IMM() {CMP_IMM_OP(ac);}
+void CPU::CMP_ZPG() {CMP_ZPR_OP(ac, 0);}
+void CPU::CMP_ZPX() {CMP_ZPR_OP(ac, x);}
+void CPU::CMP_ABS() {CMP_ABS_OP(ac, 0);}
+void CPU::CMP_ABX() {CMP_ABS_OP(ac, x);}
+void CPU::CMP_ABY() {CMP_ABS_OP(ac, y);}
 
-// void CPU::CMP_IMM(); // compare ac
-// void CPU::CMP_ZPG();
-// void CPU::CMP_ZPX();
-// void CPU::CMP_ABS();
-// void CPU::CMP_ABX();
-// void CPU::CMP_ABY();
-// void CPU::CMP_XIN();
-// void CPU::CMP_INY();
+void CPU::CMP_XIN() {
+    u8 pt = read_byte(++pc);
+    u8 pt_lo_addr = pt+x;
+    u8 pt_hi_addr = pt_lo_addr + 1;
 
-// void CPU::CPX_IMM(); 
-// void CPU::CPX_ZPG();
-// void CPU::CPX_ABS();
+    u16 addr = ((u16)pt_hi_addr << 8) | pt_lo_addr;
+    u8 temp = ac - read_byte(addr);
+    if (temp > 0) set_status(CARRY_POS, 1);
+    else set_status(CARRY_POS, 0);
 
-// void CPU::CPY_IMM(); 
-// void CPU::CPY_ZPG();
-// void CPU::CPY_ABS();
+    if (temp == 0) set_status(ZERO_POS, 1);
+    else set_status(ZERO_POS, 0);
 
-// // Increments and decrements
-// void CPU::INC_ZPG();
-// void CPU::INC_ZPX();
-// void CPU::INC_ABS();
-// void CPU::INC_ABX();
+    u8 b7 = (temp >> 7) & 0x1;
+    if (b7) set_status(NEG_POS, 1);
+    else set_status(NEG_POS, 0);
+    run_cycles(6);
+}
 
-// void CPU::INX();
-// void CPU::INY();
+void CPU::CMP_INY() {
+    u8 cycles = 5;
+    u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	u16 addr = base_addr + y;
 
-// void CPU::DEC_ZPG();
-// void CPU::DEC_ZPX();
-// void CPU::DEC_ABS();
-// void CPU::DEC_ABX();
+	if ((base_addr & 0xFF00) != (addr & 0xFF00)) cycles++;
+	u8 temp = ac - read_byte(addr);
 
-// void CPU::DEX();
-// void CPU::DEY();
+	if (temp > 0) set_status(CARRY_POS, 1);
+    else set_status(CARRY_POS, 0);
 
-// // Shifts, Rotate instr use the CARRY flag bit to fill the void from the shift
-// void CPU::ASL_A();
-// void CPU::ASL_ZPG();
-// void CPU::ASL_ZPX();
-// void CPU::ASL_ABS();
-// void CPU::ASL_ABX();
+    if (temp == 0) set_status(ZERO_POS, 1);
+    else set_status(ZERO_POS, 0);
 
-// void CPU::LSR_A();
-// void CPU::LSR_ZPG();
-// void CPU::LSR_ZPX();
-// void CPU::LSR_ABS();
-// void CPU::LSR_ABX();
+    u8 b7 = (temp >> 7) & 0x1;
+    if (b7) set_status(NEG_POS, 1);
+    else set_status(NEG_POS, 0);
 
-// void CPU::ROL_A();
-// void CPU::ROL_ZPG();
-// void CPU::ROL_ZPX();
-// void CPU::ROL_ABS();
-// void CPU::ROL_ABX();
+	run_cycles(cycles);
+}
 
-// void CPU::ROR_A();
-// void CPU::ROR_ZPG();
-// void CPU::ROR_ZPX();
-// void CPU::ROR_ABS();
-// void CPU::ROR_ABX();
+void CPU::CPX_IMM() {CMP_IMM_OP(x);}
+void CPU::CPX_ZPG() {CMP_ZPR_OP(x, 0);}
+void CPU::CPX_ABS() {CMP_ABS_OP(x, 0);}
 
-// // JMP and Calls, JSR stores the pc onto the stack
-// void CPU::JMP_ABS();	// JMP to another location (pc)
-// void CPU::JMP_IND();
+void CPU::CPY_IMM() {CMP_IMM_OP(y);}
+void CPU::CPY_ZPG() {CMP_ZPR_OP(y, 0);}
+void CPU::CPY_ABS() {CMP_ABS_OP(y, 0);}
 
-// void CPU::JSR(); // Jump to subroutine
-// void CPU::RTS(); // Return from subroutine
 
-// // Branch, moving PC if condition is met
-// void CPU::BCC();
-// void CPU::BCS();
-// void CPU::BEQ();
-// void CPU::BMI();
-// void CPU::BNE();
-// void CPU::BPL();
-// void CPU::BVC();
-// void CPU::BVS();
+// Increments and decrements
+void CPU::INC_ZPG() {
+    u8 addr = ++pc;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(5);
+}
 
-// // status flag change
-// void CPU::CLC();
-// void CPU::CLD();
-// void CPU::CLI();
-// void CPU::CLV();
-// void CPU::SEC();
-// void CPU::SED();
-// void CPU::SEI();
+void CPU::INC_ZPX() {
+    u8 addr = ++pc + x;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
 
-// // Sys functions
-// void CPU::BRK();
-// void CPU::NOP();
-// void CPU::RTI();
+void CPU::INC_ABS() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::INC_ABX() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    addr += x;
+    memory[addr] += 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(7);
+}
+
+void CPU::INX() {
+    x++;
+    status_on_transfer(x);
+    run_cycles(2);
+}
+
+void CPU::INY() {
+    y++;
+    status_on_transfer(y);
+    run_cycles(2);
+}
+
+void CPU::DEC_ZPG() {
+    u8 addr = ++pc;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(5);
+}
+
+void CPU::DEC_ZPX() {
+    u8 addr = ++pc + x;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::DEC_ABS() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(6);
+}
+
+void CPU::DEC_ABX() {
+    u16 addr = read_byte(++pc) | (u16)read_byte(++pc) << 8;
+    addr += x;
+    memory[addr] -= 1;
+    status_on_transfer(memory[addr]);
+    run_cycles(7);
+}
+
+void CPU::DEX() {
+    x--;
+    status_on_transfer(x);
+    run_cycles(2);
+}
+
+void CPU::DEY() {
+    y--;
+    status_on_transfer(y);
+    run_cycles(2);
+}
+
+// Shifts, Rotate instr use the CARRY flag bit to fill the void from the shift
+void CPU::ASL_A() {
+    u8 b7 = (ac >> 7) & 0x1;
+    ac <<= 1;
+    status_on_transfer(ac);
+    set_status(CARRY_POS, b7);
+    run_cycles(2);
+}
+
+void CPU::ASL_ZPG() {
+    u8 addr = read_byte(++pc);
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+    run_cycles(5);
+}
+
+void CPU::ASL_ZPX() {
+    u8 addr = read_byte(++pc) + x;
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+    run_cycles(6);
+}
+
+void CPU::ASL_ABS() {
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+    run_cycles(6);
+}
+
+void CPU::ASL_ABX() {
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    addr += x;
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+    run_cycles(7);
+}
+
+void CPU::LSR_A() {
+    u8 b0 = ac & 0x1;
+    ac >>= 1;
+    status_on_transfer(ac);
+    set_status(CARRY_POS, b0);
+    run_cycles(2);
+}
+
+void CPU::LSR_ZPG() {
+    u8 addr = read_byte(++pc);
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(5);
+}
+
+void CPU::LSR_ZPX() {
+    u8 addr = read_byte(++pc) + x;
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(6);
+}
+
+void CPU::LSR_ABS() {
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(6);
+}
+
+void CPU::LSR_ABX() {
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    addr += x;
+    u8 b0 = (memory[addr] >> 7) & 0x1;
+    memory[addr] >>= 1;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(7);
+}
+
+void CPU::ROL_A() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 b7 = (ac >> 7) & 0x1;
+    ac <<= 1;
+    ac |= old_carry;
+    status_on_transfer(ac);
+    set_status(CARRY_POS, b7);
+   run_cycles(2);
+}
+
+void CPU::ROL_ZPG() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 addr = read_byte(++pc);
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    memory[addr] |= old_carry;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+   run_cycles(5);
+}
+
+void CPU::ROL_ZPX() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 addr = read_byte(++pc) + x;
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    memory[addr] |= old_carry;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+   run_cycles(6);
+}
+
+void CPU::ROL_ABS() {
+    u8 old_carry = get_status(CARRY_POS);
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    memory[addr] |= old_carry;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+   run_cycles(6);
+}
+
+void CPU::ROL_ABX() {
+    u8 old_carry = get_status(CARRY_POS);
+   	u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    addr += x;
+    u8 b7 = (memory[addr] >> 7) & 0x1;
+    memory[addr] <<= 1;
+    memory[addr] |= old_carry;
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b7);
+   run_cycles(7);
+}
+
+void CPU::ROR_A() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 b0 = ac & 0x1;
+    ac >>= 1;
+    ac |= (old_carry << 7);
+    status_on_transfer(ac);
+    set_status(CARRY_POS, b0);
+   run_cycles(2);
+}
+
+void CPU::ROR_ZPG() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 addr = read_byte(++pc);
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    memory[addr] |= (old_carry << 7);
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(5);
+}
+
+void CPU::ROR_ZPX() {
+    u8 old_carry = get_status(CARRY_POS);
+    u8 addr = read_byte(++pc) + x;
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    memory[addr] |= (old_carry << 7);
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(6);
+}
+
+void CPU::ROR_ABS() {
+    u8 old_carry = get_status(CARRY_POS);
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    memory[addr] |= (old_carry << 7);
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(6);
+}
+
+void CPU::ROR_ABX() {
+    u8 old_carry = get_status(CARRY_POS);
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    addr += x;
+    u8 b0 = memory[addr] & 0x1;
+    memory[addr] >>= 1;
+    memory[addr] |= (old_carry << 7);
+    status_on_transfer(memory[addr]);
+    set_status(CARRY_POS, b0);
+    run_cycles(7);
+}
+
+// JMP and Calls, JSR stores the pc onto the stack
+void CPU::JMP_ABS() {
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    pc = addr;
+    run_cycles(3);
+}
+
+// on original 6502, it does not fetch correctly when hitting a page boundary
+// instead most sig byte is taken from XX00
+void CPU::JMP_IND() {
+    u8 pt_lo_addr = read_byte(++pc);
+	u8 pt_hi_addr = read_byte(++pc);
+	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	// adding one to the base address should implement the incorrect handling, of LSB is 0xXXFF + 1 on a u8 should wrap around to 0xXX00
+	u16 addr = (u16)(read_byte(base_addr+1) << 8) | read_byte(base_addr);
+	pc = addr;
+	run_cycles(5);
+}
+
+// push return point - 1 to stack, put pc on address of subroutine
+void CPU::JSR() {
+    u16 addr = read_byte(++pc) | ((u16)read_byte(++pc) << 8);
+    // push pc's current position, as +1 would be the return
+    push_stack(pc);
+    pc = addr;
+    run_cycles(6);
+}
+
+// Return from subroutine
+void CPU::RTS() {
+    pc = pop_stack();
+    run_cycles(6);
+}
+
+// Branch, moving PC if condition is met
+void CPU::BCC() {BCOMP_STA(CARRY_POS, 0);}
+void CPU::BCS() {BCOMP_STA(CARRY_POS, 1);}
+void CPU::BEQ() {BCOMP_STA(ZERO_POS, 1);}
+void CPU::BMI() {BCOMP_STA(NEG_POS, 1);}
+void CPU::BNE() {BCOMP_STA(ZERO_POS, 0);}
+void CPU::BPL() {BCOMP_STA(NEG_POS, 0);}
+void CPU::BVC() {BCOMP_STA(OVRFL_POS, 0);}
+void CPU::BVS() {BCOMP_STA(OVRFL_POS, 1);}
+
+// status flag change
+void CPU::CLC() {
+    set_status(CARRY_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLD() {
+    set_status(DECB_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLI() {
+    set_status(INTDIS_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::CLV() {
+    set_status(OVRFL_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::SEC() {
+    set_status(CARRY_POS, 1);
+    run_cycles(2);
+}
+
+void CPU::SED() {
+    set_status(DECB_POS, 0);
+    run_cycles(2);
+}
+
+void CPU::SEI() {
+    set_status(INTDIS_POS, 0);
+    run_cycles(2);
+}
+
+// Sys functions
+// Store status to stack and put pc to FFFE, set BRK in status to 1
+void CPU::BRK() {
+    // push pc to stack +2 as BRK is a 2 byte instruction with it's padding
+    push_stack(pc+2);
+    push_stack(sta);
+    set_status(BRKB_POS, 1);
+    pc = 0xFFFE;
+    run_cycles(7);
+}
+
+void CPU::NOP() {
+    run_cycles(2);
+    ++pc;
+}
+// Pull CPU status from stack after interupt and restore pc
+void CPU::RTI() {
+    u8 restored_status = pop_stack();
+    sta = restored_status;
+    pc = pop_stack();
+    run_cycles(6);
+}

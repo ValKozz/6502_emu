@@ -41,6 +41,15 @@ Last 6 bytes are reserved, 0xFFFA to 0xFFFF
 #define OVRFL	0x40
 #define NEG		0x80
 
+#define CARRY_POS 	0
+#define ZERO_POS  	1
+#define INTDIS_POS	2
+#define DECB_POS	3
+#define BRKB_POS	4
+#define UNDF_POS	5
+#define OVRFL_POS	6
+#define NEG_POS		7
+
 #define MEMSIZE 0xFFFF
 
 class CPU
@@ -58,9 +67,10 @@ class CPU
 	void run_cycles(int cycles);
 
 	// helpers to set status register, either 0 or 1
-	void set_status(u8 bit);
-	void unset_status(u8 bit);
-	void status_on_transfer(u16 reg);
+	void set_status(u8 bit_pos, u8 value);
+	u8 get_status(u8 bit_pos);
+	void status_on_transfer(u8 reg);
+	void status_on_cmp(u8 value);
 
 	void push_stack(u8 value);
 	u8 pop_stack();
@@ -74,7 +84,7 @@ class CPU
 	void dump_mem();
 
 	// Load/Store operations
-	void LDA_IMM(); 
+	void LDA_IMM();
 	void LDA_ZPG();
 	void LDA_ZPX();
 	void LDA_ABS();
@@ -154,7 +164,7 @@ class CPU
 	void ORA_INY();
 
 	void BIT_ABS(); // Bit test
-	void BIT_ZPG(); 
+	void BIT_ZPG();
 
 	// Arithmetic
 	void ADC_IMM(); // Add w/ carry
@@ -184,11 +194,11 @@ class CPU
 	void CMP_XIN();
 	void CMP_INY();
 
-	void CPX_IMM(); 
+	void CPX_IMM();
 	void CPX_ZPG();
 	void CPX_ABS();
 
-	void CPY_IMM(); 
+	void CPY_IMM();
 	void CPY_ZPG();
 	void CPY_ABS();
 
@@ -270,9 +280,9 @@ class CPU
 	void execute();
 
 	using op_func = void (CPU::*)();
-	static constexpr op_func ILL = &CPU::NOP;
+	op_func ILL = &CPU::NOP;
 
-	static constexpr std::array<op_func, 256> opcode_table = {
+	std::array<op_func, 256> opcode_table = {
 /*  	0x0 			0x1 		 0x2    	   0x3  0x4 			0x5  		   0x6			  0x7  0x8		  0x9			 0xA 		  0xB  0xC				0xD 		   0xE			  0XF*/
 /*0x0*/ &CPU::BRK,    &CPU::ORA_XIN, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPG, &CPU::ASL_ZPG, ILL, &CPU::PHP, &CPU::ORA_IMM, &CPU::ASL_A, ILL, ILL,		 		&CPU::ORA_ABS, &CPU::ASL_ABS, ILL,
 /*0x1*/ &CPU::BPL,    &CPU::ORA_INY, ILL, 		   ILL, ILL, 		  	&CPU::ORA_ZPX, &CPU::ASL_ZPX, ILL, &CPU::CLC, &CPU::ORA_ABY, ILL,		  ILL, ILL, 			&CPU::ORA_ABX, &CPU::ASL_ABX, ILL,
@@ -289,9 +299,9 @@ class CPU
 /*0xC*/ &CPU::CPY_IMM,&CPU::CMP_XIN, ILL,		   ILL, &CPU::CPY_ZPG, 	&CPU::CMP_ZPG, &CPU::DEC_ZPG, ILL, &CPU::INY, &CPU::CMP_IMM, &CPU::DEX,   ILL, &CPU::CPY_ABS, 	&CPU::CMP_ABS, &CPU::DEC_ABS, ILL,
 /*0XD*/ &CPU::BNE,	  &CPU::CMP_INY, ILL,		   ILL, ILL,			&CPU::CMP_ZPX, &CPU::DEC_ZPX, ILL, &CPU::CLD, &CPU::CMP_ABY, ILL,		  ILL, ILL,				&CPU::CMP_ABX, &CPU::DEC_ABX, ILL,
 /*0XE*/ &CPU::CPX_IMM,&CPU::SBC_XIN, ILL, 		   ILL, &CPU::CPX_ZPG, 	&CPU::SBC_ZPG, &CPU::INC_ZPG, ILL, &CPU::INX, &CPU::SBC_IMM, &CPU::NOP,   ILL, &CPU::CPX_ABS,  	&CPU::SBC_ABS, &CPU::INC_ABS, ILL,
-/*0xF*/ &CPU::BEQ,    &CPU::SBC_INY, ILL,		   ILL, ILL,			&CPU::SBC_ZPX, &CPU::INC_ZPX, ILL, &CPU::SED, &CPU::SBC_ABY, ILL,		  ILL, ILL,				&CPU::SBC_ABX, &CPU::INC_ABX, ILL, 		 
+/*0xF*/ &CPU::BEQ,    &CPU::SBC_INY, ILL,		   ILL, ILL,			&CPU::SBC_ZPX, &CPU::INC_ZPX, ILL, &CPU::SED, &CPU::SBC_ABY, ILL,		  ILL, ILL,				&CPU::SBC_ABX, &CPU::INC_ABX, ILL,
 	};
-public:	
+public:
 	CPU(uint8_t freq = 1); // used to reserve memory and set frequency in MHz
 	bool load_prog(std::vector<u8> prog, int vec_size);
 	void run();
