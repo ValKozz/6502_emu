@@ -18,10 +18,14 @@ A Makefile is included under /src. Building will create a /build folder containi
 Running <code>make clean</code> will remove the build folder and it's associated files.
 
 </br>
+# Implemented so far
+- instruction set
 
 ## TODO
-- Separate code in appropriate brances
-- Implement full instruction set and all addressing modes associated with it (in progress)
+- Implement hardware bugs in read/write operations and insturctions
+- Implement IRQ and interupts mimicking hardware
+- Implement proper memory map as 6502 does not copy the ROM into RAM necessarily 
 - Fix Debug messages and create a comprehensive debug compilation mode for testing
 - Implement a basic screen sub-module
 - Implement a basic sound sub-module
+- Implement illegal instructions for full compatibillity with hacks

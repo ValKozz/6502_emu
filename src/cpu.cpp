@@ -332,7 +332,6 @@ void CPU::execute() {
     (this->*OP)();
 }
 
-// TODO
 // Load/Store operations
 void CPU::LDA_IMM() {IMM_OP(ac, =);}
 void CPU::LDA_ZPG() {ZPG_OP(ac, =);}
@@ -489,6 +488,7 @@ void CPU::PHA() {
 
 void CPU::PHP() {
 	push_stack(sta);
+	set_status(BRKB_POS, 1);
 	run_cycles(3);
 }
 
@@ -500,6 +500,8 @@ void CPU::PLA() {
 
 void CPU::PLP() {
 	sta = pop_stack();
+	// BRK flag is always masked and cleared on restore
+	set_status(BRKB_POS, 0);
 	run_cycles(4);
 }
 
@@ -1028,13 +1030,13 @@ void CPU::JMP_ABS() {
     run_cycles(3);
 }
 
-// on original 6502, it does not fet correctly when hitting a page boundary
-// instead most sig byte is take from XX00
-// TODO - implement the bug
+// on original 6502, it does not fetch correctly when hitting a page boundary
+// instead most sig byte is taken from XX00
 void CPU::JMP_IND() {
     u8 pt_lo_addr = read_byte(++pc);
 	u8 pt_hi_addr = read_byte(++pc);
 	u16 base_addr = (u16)(read_byte(pt_hi_addr) << 8) | read_byte(pt_lo_addr);
+	// adding one to the base address should implement the incorrect handling, of LSB is 0xXXFF + 1 on a u8 should wrap around to 0xXX00
 	u16 addr = (u16)(read_byte(base_addr+1) << 8) | read_byte(base_addr);
 	pc = addr;
 	run_cycles(5);
@@ -1103,11 +1105,12 @@ void CPU::SEI() {
 
 // Sys functions
 // Store status to stack and put pc to FFFE, set BRK in status to 1
-// TODO, get a clearer picture if this is correct
 void CPU::BRK() {
+    // push pc to stack +2 as BRK is a 2 byte instruction with it's padding
+    push_stack(pc+2);
     push_stack(sta);
-    pc = 0xFFFE;
     set_status(BRKB_POS, 1);
+    pc = 0xFFFE;
     run_cycles(7);
 }
 
@@ -1115,9 +1118,10 @@ void CPU::NOP() {
     run_cycles(2);
     ++pc;
 }
-// Pull CPU status from stack after interupt
+// Pull CPU status from stack after interupt and restore pc
 void CPU::RTI() {
     u8 restored_status = pop_stack();
     sta = restored_status;
+    pc = pop_stack();
     run_cycles(6);
 }

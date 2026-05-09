@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
 
 	file.close();
 
+	// 1 MHz
 	CPU _6502(1);
 	if (_6502.load_prog(prog, prog.size())) _6502.run();
 	return 0;
