@@ -5,7 +5,7 @@
 
 #include <unistd.h>
 
-#define MAX_PROG_SIZE 0xFFFF
+#define MAX_PROG_SIZE MEMSIZE - ROM_START // 32.5K
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -176,8 +176,10 @@ bool CPU::load_prog(std::vector<u8> prog, int vec_size) {
 		fprintf(stderr, "Program too large to fit into memory!\n");
 		return false;
 	}
-	int prog_start = (MEMSIZE+1) - vec_size;
-	for (int i = 0; i < vec_size; i++) memory[i + prog_start] = prog[i];
+
+	u16 start_addr = MEMSIZE - vec_size;
+	// map ROM to top of address space
+	for (int i = 0; i < vec_size; i++) memory[i + start_addr] = prog[i];
 
 	return true;
 }
@@ -221,7 +223,7 @@ void CPU::reset() {
 
 	u8 lo = read_byte(0xFFFC);
 	u8 hi = read_byte(0xFFFD);
-	pc = (hi << 8 | lo) - 1;
+	pc = ((u16)hi << 8 | lo);
 
 	DEBMSG("Set PC to", pc);
 	run_cycles(3); // +1 for fetch
@@ -236,19 +238,20 @@ void CPU::run_cycles(int cycles) {
 
 void CPU::push_stack(u8 value) {
 	// get actual memory location
-	u16 mem_loc = 0x0100 & sp--;
+	u16 mem_loc = STACK_START & sp-1;
 	write_byte(mem_loc, value);
+	sp -= 1;
 	if (sp == 0xFF) WARN("OVERFLOW DETECTED, STACK POINTER", sp);
 }
 
 u8 CPU::pop_stack() {
 	// get actual memory location
-	u16 mem_loc = 0x0100 & sp++;
+	u16 mem_loc = STACK_START & sp++;
 	u8 popped = read_byte(mem_loc);
  	if (sp == 0x00) WARN("UNDERFLOW DETECTED, STACK POINTER", sp);
  	return popped;
 }
-
+// will probably remove if no use in debugging is found
 u8 CPU::peek_stack() {
 	u8 value = read_byte(0x100 & sp);
 	return value;
@@ -319,13 +322,12 @@ void CPU::run() {
 
 // TODO
 void CPU::fetch() {
-	pc+=1;
 	// temp for testing
+	pc+=1;
 	DEBMSG("Fetched", memory[pc]);
 	execute();
 }
 
-// TODO
 void CPU::execute() {
     u8 op_type = memory[pc];
     void (CPU::*OP)(void) = opcode_table[op_type];

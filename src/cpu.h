@@ -32,15 +32,6 @@ Last 6 bytes are reserved, 0xFFFA to 0xFFFF
 
 */
 
-#define CARRY 	0x01
-#define ZERO  	0x02
-#define INTDIS	0x04
-#define DECB	0x08
-#define BRKB	0x10
-#define UNDF	0x20
-#define OVRFL	0x40
-#define NEG		0x80
-
 #define CARRY_POS 	0
 #define ZERO_POS  	1
 #define INTDIS_POS	2
@@ -50,7 +41,13 @@ Last 6 bytes are reserved, 0xFFFA to 0xFFFF
 #define OVRFL_POS	6
 #define NEG_POS		7
 
-#define MEMSIZE 0xFFFF
+// max memory up to 64 KB
+#define MEMSIZE     0xFFFF
+#define STACK_START 0x0100
+#define RAM_START   0x0200
+#define RAM_END     0x7EFF  // 32K of RAM
+#define IO_START    0x7F00
+#define ROM_START   0x8000 // to 0xFFFF - about 32.5K ROM
 
 class CPU
 {
